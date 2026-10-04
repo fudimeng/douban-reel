@@ -21,10 +21,10 @@
 
 需要 Docker Engine、Docker Compose v2 和可用的 Seerr。镜像在目标机器上从源码构建，无需预先下载项目专用镜像。
 
-获取源码并运行（将 `<仓库URL>` 替换为本仓库实际地址）：
+获取源码并运行：
 
 ```bash
-git clone <仓库URL> douban-reel
+git clone https://github.com/fudimeng/douban-reel.git douban-reel
 cd douban-reel
 python3 scripts/init_env.py
 docker compose up -d --build
@@ -83,13 +83,13 @@ Seerr 需要事先配置好默认 Radarr / Sonarr 服务、质量配置和根目
 
 ## 让 Agent 安装并配置
 
-将下面的 Prompt 复制给有目标机器访问权限的 Agent，填写仓库地址和目标机器即可。Agent 会检查现有服务并自动读取配置；只有无法找到的凭据才需要提供私密文件路径，不要把敏感值写进 Prompt。
+将下面的 Prompt 复制给有目标机器访问权限的 Agent，填写目标机器即可。Agent 会检查现有服务并自动读取配置；只有无法找到的凭据才需要提供私密文件路径，不要把敏感值写进 Prompt。
 
 ```text
 请安装并配置开源项目「豆瓣映单 / Douban Reel」，完成部署与验证。
 
 部署信息：
-- 仓库 URL：<本仓库实际 URL>
+- 仓库 URL：https://github.com/fudimeng/douban-reel.git
 - 目标机器：<主机名 / SSH 别名；已在目标机器则直接操作>
 - 域名：<可选；不填则使用局域网地址>
 - 登录认证：开启（需要免密码时改为关闭，设置 AUTH_ENABLED=false）
