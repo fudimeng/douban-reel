@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>豆瓣映单 · Douban Reel</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
 <body>
-<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单<small>DOUBAN REEL · 想看清单，自在同步</small></span></a><span class="version">SELF-HOSTED <b>v0.2.0</b></span></header>
+<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单<small>DOUBAN REEL · 想看清单，自在同步</small></span></a><div class="nav-actions"><span class="version">SELF-HOSTED <b>v0.2.1</b></span><div class="nav-save"><span id="dirty" class="help" aria-live="polite">修改后请保存配置</span><button id="saveConfig" class="primary" type="submit" form="settingsForm">保存配置</button></div></div></header>
 <main>
   <section class="hero"><div><p class="eyebrow">YOUR WATCHLIST, CONNECTED</p><h1>把想看，交给片库。</h1><p class="muted">定时读取豆瓣想看列表，将电影与电视剧自动请求到 Seerr。</p></div><div class="hero-actions"><button id="preview" class="secondary">预览同步</button><button id="sync" class="primary">立即同步 <span>↗</span></button><button id="stop" class="danger" hidden>停止任务</button></div></section>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -33,7 +33,6 @@
       <section class="card"><div class="section-heading"><span class="step">04</span><div><h2>Cookie 失效通知</h2><p>登录失效或需要安全验证时通过 Bark 提醒</p></div></div>
         <label for="bark_url">Bark 推送地址 <span class="saved" id="barkSaved"></span></label><input id="bark_url" type="password" placeholder="https://api.day.app/设备密钥" autocomplete="new-password"><p class="help">支持自建 HTTP(S) Bark 服务。地址加密保存，不回显；留空保留已存值，填写后点击“保存配置”。</p>
         <div class="button-row"><button id="testBark" type="button" class="secondary small">测试 Bark 推送</button><button id="deleteBark" type="button" class="text-button">删除地址</button></div><p id="notificationHealth" class="help">同一版 Cookie 成功提醒一次，重新导入后重新启用提醒。</p>
-        <div class="save-row"><span id="dirty" class="help">修改后请保存配置</span><button class="primary" type="submit">保存配置</button></div>
       </section></form>
     </div>
     <aside>
