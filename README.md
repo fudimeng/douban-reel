@@ -12,7 +12,7 @@
 - Cookie 采用 [fudimeng/jellyfin-plugin-douban-sync](https://github.com/fudimeng/jellyfin-plugin-douban-sync) 的录入流程：粘贴完整 Cookie，检查 `dbcl2` / `ck`，服务端验证后加密保存，不回显，支持删除。该项目仅作为流程参考，没有复制其源码。
 - 每次同步（含预览）先校验登录，更新豆瓣响应中的 Cookie 与登录页提供的 `ck` 并加密保存。豆瓣未返回新值时沿用有效值；失效的登录凭据不能靠刷新恢复，需重新导入。
 - Cookie 失效或需要登录验证时可通过 Bark 通知。同一版 Cookie 成功提醒一次，重新导入后重新启用提醒；去重状态跨重启保留，发送失败在下一次失效检查重试。普通网络故障、限流和页面解析错误不触发失效通知。
-- Cookie、Seerr API Key、Bark 推送地址使用 Fernet 加密保存；管理界面使用 HTTP Basic 登录。Bark 地址留空保留，可测试推送和删除；支持自建 HTTP(S) 服务。
+- Cookie、Seerr API Key、Bark 推送地址使用 Fernet 加密保存；管理界面默认使用 HTTP Basic 登录，可通过部署变量关闭认证。Bark 地址留空保留，可测试推送和删除；支持自建 HTTP(S) 服务。
 - SQLite 持久化配置、同步状态、映射和运行记录；任务互斥、跨进程数据目录锁、失败项下次重试。
 - 豆瓣请求间隔随机为 2 秒至配置上限，默认上限 15 秒，可设置 2–60 秒。首个请求立即发送；网络请求已耗时会从等待时间中扣除。同步、Cookie 验证和跳转共用限速，等待可随任务停止中断。遇到安全验证、限流或异常页面停止本轮，不尝试绕过验证。
 - 运行中也能保存配置、验证/更新 Cookie 和设置映射；当前任务使用启动时的配置，新配置从下一次任务生效。
@@ -33,6 +33,12 @@ docker compose up -d --build
 打开 **http://localhost:8787**，浏览器会提示登录。用户名默认 `admin`，自动生成的密码在本地 `.env` 文件中。初始化脚本不覆盖已有 `.env`，也不会把密码输出到终端日志。
 
 没有 Python 的 NAS 可复制 `.env.example` 为 `.env`，自行修改 `ADMIN_PASSWORD`（至少 12 个字符），然后运行 Docker Compose。
+
+### 免密码部署
+
+在 `.env` 中设置 `AUTH_ENABLED=false`，然后运行 `docker compose up -d --build`。网页和管理 API 将无需账号密码，`ADMIN_PASSWORD` 可留空；改回 `AUTH_ENABLED=true` 并设置至少 12 位密码即可恢复认证。未设置该变量时默认启用认证。
+
+免密码模式下，任何能访问该地址的人都可以管理配置和发起同步，适合已限制访问的局域网或已有认证的反向代理。Cookie、API Key 和 Bark 地址仍加密保存且不回显，写操作仍需通过来源校验。
 
 默认仅监听 `127.0.0.1`。需要局域网访问时，将 `.env` 中 `BIND_ADDRESS` 改为 NAS 的局域网 IP 或 `0.0.0.0`，再次执行 `docker compose up -d`，通过 `http://NAS-IP:8787` 访问。远程访问请放在 HTTPS 反向代理后，避免明文传输登录凭据。应用部署在域名根路径。
 
@@ -86,6 +92,7 @@ Seerr 需要事先配置好默认 Radarr / Sonarr 服务、质量配置和根目
 - 仓库 URL：<本仓库实际 URL>
 - 目标机器：<主机名 / SSH 别名；已在目标机器则直接操作>
 - 域名：<可选；不填则使用局域网地址>
+- 登录认证：开启（需要免密码时改为关闭，设置 AUTH_ENABLED=false）
 - 开启定时同步：否（需要自动下载时改为是）
 
 安装目录、可用端口和容器可访问的 Seerr 地址由你检查确定。
@@ -120,7 +127,7 @@ Seerr 需要事先配置好默认 Radarr / Sonarr 服务、质量配置和根目
 
 ### Agent 使用的管理 API
 
-API 与网页使用相同的 HTTP Basic 管理员认证。写操作需请求头 `X-Requested-With: douban-reel`，JSON 请求需 `Content-Type: application/json`。凭据应从私密文件读取，在脚本内存中组装请求，不放进 shell 命令参数。
+API 与网页使用相同的 HTTP Basic 管理员认证；设置 `AUTH_ENABLED=false` 时均无需认证。写操作需请求头 `X-Requested-With: douban-reel`，JSON 请求需 `Content-Type: application/json`。凭据应从私密文件读取，在脚本内存中组装请求，不放进 shell 命令参数。
 
 | 操作 | 方法与路径 | 请求内容 |
 | --- | --- | --- |

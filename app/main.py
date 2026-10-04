@@ -22,14 +22,18 @@ from .notifications import send_bark
 STATIC = Path(__file__).parent / 'static'
 
 
-def create_app(data_dir=None, admin_password=None, scheduler=True):
-    password = admin_password or os.environ.get('ADMIN_PASSWORD', '')
+def create_app(data_dir=None, admin_password=None, scheduler=True, auth_enabled=None):
+    mode = str(os.environ.get('AUTH_ENABLED', 'true') if auth_enabled is None else auth_enabled).strip().lower()
+    if mode not in ('true', 'false'):
+        raise RuntimeError('AUTH_ENABLED 必须为 true 或 false')
+    authentication_enabled = mode == 'true'
+    password = admin_password if admin_password is not None else os.environ.get('ADMIN_PASSWORD', '')
     username = os.environ.get('ADMIN_USERNAME', 'admin')
     directory = data_dir or os.environ.get('DATA_DIR', './data')
 
     @asynccontextmanager
     async def lifespan(app):
-        if len(password) < 12:
+        if authentication_enabled and len(password) < 12:
             raise RuntimeError('ADMIN_PASSWORD 至少需要 12 个字符；先运行 python3 scripts/init_env.py')
         Path(directory).mkdir(parents=True, exist_ok=True)
         lock_file = open(Path(directory) / 'instance.lock', 'w')
@@ -62,7 +66,12 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
     app = FastAPI(title='豆瓣映单 · Douban Reel', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     basic = HTTPBasic(auto_error=False)
 
-    def auth(credentials: HTTPBasicCredentials | None = Depends(basic)):
+    def no_auth():
+        return None
+
+    def auth(credentials: HTTPBasicCredentials | None = Depends(basic if authentication_enabled else no_auth)):
+        if not authentication_enabled:
+            return
         if not credentials or not (secrets.compare_digest(credentials.username.encode(), username.encode()) and secrets.compare_digest(credentials.password.encode(), password.encode())):
             raise HTTPException(401, '请使用管理员账号登录', headers={'WWW-Authenticate': 'Basic realm="Douban Reel", charset="UTF-8"'})
 
