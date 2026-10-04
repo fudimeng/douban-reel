@@ -1,46 +1,47 @@
-<!doctype html>
+<!DOCTYPE html>
+
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>豆瓣映单 · Douban Reel</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
+<head><meta charset="utf-8"/><meta content="width=device-width,initial-scale=1" name="viewport"/><title>豆瓣映单 · Douban Reel</title><link href="/static/style.css" rel="stylesheet"/><script defer="" src="/static/app.js"></script></head>
 <body>
-<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单<small>DOUBAN REEL · 想看清单，自在同步</small></span></a><div class="nav-actions"><span class="version">SELF-HOSTED <b>v0.2.1</b></span><div class="nav-save"><span id="dirty" class="help" aria-live="polite">修改后请保存配置</span><button id="saveConfig" class="primary" type="submit" form="settingsForm">保存配置</button></div></div></header>
+<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单</span></a><div class="nav-actions"><div class="nav-save"><span aria-live="polite" class="help" id="dirty"></span><button class="primary" form="settingsForm" id="saveConfig" type="submit">保存配置</button></div></div></header>
 <main>
-  <section class="hero"><div><p class="eyebrow">YOUR WATCHLIST, CONNECTED</p><h1>把想看，交给片库。</h1><p class="muted">定时读取豆瓣想看列表，将电影与电视剧自动请求到 Seerr。</p></div><div class="hero-actions"><button id="preview" class="secondary">预览同步</button><button id="sync" class="primary">立即同步 <span>↗</span></button><button id="stop" class="danger" hidden>停止任务</button></div></section>
-  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
-  <section class="stats" aria-label="同步概况"><article><span>调度状态</span><strong id="schedulerState">读取中</strong><small id="nextRun">—</small></article><article><span>已提交请求</span><strong id="submitted">0</strong><small>当前账号与 Seerr 的累计条目</small></article><article><span>Seerr 已存在</span><strong id="existing">0</strong><small>已请求或已有媒体，自动跳过</small></article><article><span>需要处理</span><strong id="failed">0</strong><small>匹配失败或连接异常</small></article></section>
-  <div class="workspace">
-    <div class="settings">
-      <section class="card"><div class="section-heading"><span class="step">01</span><div><h2>豆瓣账号</h2><p>连接你的影视想看列表</p></div><span id="cookieStatus" class="badge">未配置</span></div>
-        <label for="douban_user">豆瓣用户 ID 或个人主页</label><input id="douban_user" placeholder="例如：https://www.douban.com/people/your-id/" autocomplete="off">
-        <label for="cookie">浏览器 Cookie</label><textarea id="cookie" rows="4" placeholder="dbcl2=…; ck=…; bid=…" autocomplete="off" spellcheck="false"></textarea><p class="help">验证后加密保存，不回显。支持完整 Cookie 请求头或浏览器导出的 JSON 数组。</p>
-        <div class="button-row"><button id="saveCookie" class="primary small">验证并保存 Cookie</button><button id="testCookie" class="secondary small">验证已存 Cookie</button><button id="deleteCookie" class="text-button">删除</button></div>
-        <p id="cookieHealth" class="help">每次同步前校验登录并更新豆瓣返回的 Cookie / ck。</p>
-        <details><summary>如何获取豆瓣 Cookie？</summary><ol><li>在浏览器中登录 <a href="https://movie.douban.com/" target="_blank" rel="noreferrer">豆瓣电影</a>。</li><li>按 F12 打开开发者工具 → Network（网络），刷新页面。</li><li>选中 movie.douban.com 的页面请求，在 Request Headers 中复制完整 Cookie。</li><li>粘贴到上方，至少需要 <code>dbcl2</code> 和 <code>ck</code>，点击“验证并保存 Cookie”。</li></ol><p>如果遇到安全验证，请先在与服务相同出口网络的浏览器中完成验证，再重新导入。</p><p>录入流程参考 <a href="https://github.com/fudimeng/jellyfin-plugin-douban-sync" target="_blank" rel="noreferrer">Jellyfin 豆瓣同步</a>。</p></details>
-      </section>
-      <form id="settingsForm">
-      <section class="card"><div class="section-heading"><span class="step">02</span><div><h2>媒体服务</h2><p>通过 IMDb 精确匹配，将请求送达 Seerr</p></div></div>
-        <label for="seerr_url">Seerr 地址</label><input id="seerr_url" type="url" placeholder="http://192.168.1.100:5055"><p class="help">使用容器可访问的地址。Seerr 在另一容器时可使用同网络的服务名。</p>
-        <label for="seerr_api_key">Seerr API Key <span class="saved" id="seerrSaved"></span></label><input id="seerr_api_key" type="password" placeholder="设置 → 通用 → API Key" autocomplete="new-password">
-        <p class="help">密钥留空时保留已存值。影视匹配通过 Seerr 完成，无需单独填写 TMDB Token。</p>
-        <div class="button-row"><button type="button" id="testSeerr" class="secondary small">测试 Seerr</button><span class="help">测试使用已保存配置</span></div>
-      </section>
-      <section class="card"><div class="section-heading"><span class="step">03</span><div><h2>同步规则</h2><p>决定同步什么，以及何时同步</p></div></div>
-        <div class="media-toggles"><label class="toggle-card"><span><b>电影</b><small>提交电影下载请求</small></span><input id="movies" type="checkbox" role="switch" checked></label><label class="toggle-card"><span><b>电视剧</b><small>按普通季提交请求</small></span><input id="tv" type="checkbox" role="switch" checked></label></div>
-        <div class="fields"><div><label for="history_days">历史范围 · 天</label><input id="history_days" type="number" min="1" max="36500" value="30" required></div><div><label for="interval_minutes">同步间隔 · 分钟</label><input id="interval_minutes" type="number" min="15" max="10080" value="1440" required></div></div><p class="help">按豆瓣标记“想看”的日期筛选；含今天，使用北京时间。默认最近 30 天，每天同步一次（1440 分钟）。</p>
-        <div class="fields"><div><label for="request_delay">随机间隔上限 · 秒</label><input id="request_delay" type="number" min="2" max="60" step="0.5" value="15" required></div><div><label for="tv_seasons">无明确季号时</label><select id="tv_seasons"><option value="first">只请求第一季</option><option value="all">请求当前全部普通季</option></select></div></div><p class="help">豆瓣请求间隔在 2 秒至上限之间随机，默认上限 15 秒。首个请求立即发送。有明确季号时优先请求对应季。特别篇不自动请求。</p>
-        <label class="schedule-toggle"><span><b>开启定时同步</b><small>保存后开始计时；首次可先预览，再手动同步。</small></span><input id="enabled" type="checkbox" role="switch"></label>
-        <p class="help">运行中也可修改并保存。当前任务使用启动时的配置，新配置从下次任务生效。</p>
-      </section>
-      <section class="card"><div class="section-heading"><span class="step">04</span><div><h2>Cookie 失效通知</h2><p>登录失效或需要安全验证时通过 Bark 提醒</p></div></div>
-        <label for="bark_url">Bark 推送地址 <span class="saved" id="barkSaved"></span></label><input id="bark_url" type="password" placeholder="https://api.day.app/设备密钥" autocomplete="new-password"><p class="help">支持自建 HTTP(S) Bark 服务。地址加密保存，不回显；留空保留已存值，填写后点击“保存配置”。</p>
-        <div class="button-row"><button id="testBark" type="button" class="secondary small">测试 Bark 推送</button><button id="deleteBark" type="button" class="text-button">删除地址</button></div><p id="notificationHealth" class="help">同一版 Cookie 成功提醒一次，重新导入后重新启用提醒。</p>
-      </section></form>
-    </div>
-    <aside>
-      <section class="card"><div class="section-heading"><div><h2>最近运行</h2><p>最近 20 次任务</p></div><span id="runningBadge" class="badge">空闲</span></div><div id="runs" class="run-list"><p class="empty">尚无同步任务</p></div></section>
-    </aside>
-  </div>
-  <section class="card records"><div class="section-heading"><div><h2>同步记录</h2><p>当前账号与 Seerr 最近更新的 200 个条目；失败项会在下次同步重试</p></div><label class="filter-label">状态筛选<select id="filter"><option value="">全部状态</option><option value="submitted">已提交</option><option value="existing">已存在</option><option value="failed">需要处理</option><option value="preview">预览</option><option value="disabled">类型已关闭</option><option value="mapped">已映射</option></select></label></div><div class="table-scroll"><table><thead><tr><th>豆瓣条目</th><th>想看日期</th><th>类型 / TMDB</th><th>状态</th><th>说明</th><th>操作</th></tr></thead><tbody id="items"><tr><td colspan="6" class="empty">保存配置后，运行一次预览即可查看匹配结果。</td></tr></tbody></table></div></section>
-  <footer>豆瓣映单 · Douban Reel <span>只读取想看列表 · 不修改豆瓣收藏状态</span></footer>
+<section class="hero"><div><h1>同步</h1></div><div class="hero-actions"><button class="secondary" id="preview">预览同步</button><button class="primary" id="sync">立即同步 <span>↗</span></button><button class="danger" hidden="" id="stop">停止任务</button></div></section>
+<div aria-live="polite" class="notice" hidden="" id="notice" role="status"></div>
+<section aria-label="同步概况" class="stats"><article><span>调度状态</span><strong id="schedulerState">读取中</strong><small id="nextRun">—</small></article><article><span>已提交请求</span><strong id="submitted">0</strong></article><article><span>Seerr 已存在</span><strong id="existing">0</strong></article><article><span>需要处理</span><strong id="failed">0</strong></article></section>
+<div class="workspace">
+<div class="settings">
+<section class="card"><div class="section-heading"><div><h2>豆瓣账号</h2></div><span class="badge" id="cookieStatus">未配置</span></div>
+<label for="douban_user">豆瓣用户 ID 或个人主页</label><input autocomplete="off" id="douban_user" placeholder="用户 ID 或个人主页地址"/>
+<label for="cookie">豆瓣 Cookie</label><textarea autocomplete="off" id="cookie" placeholder="Cookie 请求头或 JSON" rows="4" spellcheck="false"></textarea>
+<div class="button-row"><button class="primary small" id="saveCookie">验证并保存</button><button class="secondary small" id="testCookie">验证 Cookie</button><button class="text-button" id="deleteCookie">删除</button></div>
+<p class="help" hidden="" id="cookieHealth"></p>
+<details><summary>获取 Cookie</summary><p>登录豆瓣电影，在浏览器开发者工具的网络面板中复制页面请求的 Cookie（含 dbcl2 和 ck）。</p></details>
+</section>
+<form id="settingsForm">
+<section class="card"><div class="section-heading"><div><h2>媒体服务</h2></div></div>
+<label for="seerr_url">Seerr 地址</label><input id="seerr_url" placeholder="http://192.168.1.100:5055" type="url"/>
+<label for="seerr_api_key">Seerr API Key <span class="saved" id="seerrSaved"></span></label><input autocomplete="new-password" id="seerr_api_key" placeholder="设置 → 通用 → API Key" type="password"/>
+
+<div class="button-row"><button class="secondary small" id="testSeerr" type="button">测试 Seerr</button></div>
+</section>
+<section class="card"><div class="section-heading"><div><h2>同步规则</h2></div></div>
+<div class="media-toggles"><label class="toggle-card"><span><b>电影</b></span><input checked="" id="movies" role="switch" type="checkbox"/></label><label class="toggle-card"><span><b>电视剧</b></span><input checked="" id="tv" role="switch" type="checkbox"/></label></div>
+<div class="fields"><div><label for="history_days">历史范围 · 天</label><input id="history_days" max="36500" min="1" required="" type="number" value="30"/></div><div><label for="interval_minutes">同步间隔 · 分钟</label><input id="interval_minutes" max="10080" min="15" required="" type="number" value="1440"/></div></div>
+<div class="fields"><div><label for="request_delay">随机间隔上限 · 秒</label><input id="request_delay" max="60" min="2" required="" step="0.5" type="number" value="15"/></div><div><label for="tv_seasons">无明确季号时</label><select id="tv_seasons"><option value="first">只请求第一季</option><option value="all">请求当前全部普通季</option></select></div></div>
+<label class="schedule-toggle"><span><b>开启定时同步</b></span><input id="enabled" role="switch" type="checkbox"/></label>
+
+</section>
+<section class="card"><div class="section-heading"><div><h2>Cookie 失效通知</h2></div></div>
+<label for="bark_url">Bark 推送地址 <span class="saved" id="barkSaved"></span></label><input autocomplete="new-password" id="bark_url" placeholder="https://api.day.app/设备密钥" type="password"/>
+<div class="button-row"><button class="secondary small" id="testBark" type="button">测试 Bark</button><button class="text-button" id="deleteBark" type="button">删除</button></div><p class="help" hidden="" id="notificationHealth"></p>
+</section></form>
+</div>
+<aside>
+<section class="card"><div class="section-heading"><div><h2>最近运行</h2></div><span class="badge" id="runningBadge">空闲</span></div><div class="run-list" id="runs"><p class="empty">暂无任务</p></div></section>
+</aside>
+</div>
+<section class="card records"><div class="section-heading"><div><h2>同步记录</h2></div><label class="filter-label">状态筛选<select id="filter"><option value="">全部状态</option><option value="submitted">已提交</option><option value="existing">已存在</option><option value="failed">需要处理</option><option value="preview">预览</option><option value="disabled">类型已关闭</option><option value="mapped">已映射</option></select></label></div><div class="table-scroll"><table><thead><tr><th>豆瓣条目</th><th>想看日期</th><th>类型 / TMDB</th><th>状态</th><th>说明</th><th>操作</th></tr></thead><tbody id="items"><tr><td class="empty" colspan="6">暂无记录</td></tr></tbody></table></div></section>
+
 </main>
-<dialog id="mappingDialog"><form id="mappingForm"><h2>手动指定 TMDB 映射</h2><p id="mappingTitle" class="muted"></p><input id="mappingSubject" type="hidden"><label for="mappingType">媒体类型</label><select id="mappingType"><option value="movie">电影</option><option value="tv">电视剧</option></select><label for="mappingId">TMDB ID</label><input id="mappingId" type="number" min="1" required><label for="mappingSeason">季号（电视剧可填）</label><input id="mappingSeason" type="number" min="1" max="999"><p class="help">从 TMDB 详情页网址取得数字 ID。保存后请运行预览核对；不会立即提交请求。</p><div class="button-row"><button class="primary" type="submit">保存映射</button><button id="cancelMapping" type="button" class="secondary">取消</button></div></form></dialog>
+<dialog id="mappingDialog"><form id="mappingForm"><h2>手动指定 TMDB 映射</h2><p class="muted" id="mappingTitle"></p><input id="mappingSubject" type="hidden"/><label for="mappingType">媒体类型</label><select id="mappingType"><option value="movie">电影</option><option value="tv">电视剧</option></select><label for="mappingId">TMDB ID</label><input id="mappingId" min="1" required="" type="number"/><label for="mappingSeason">季号（电视剧可填）</label><input id="mappingSeason" max="999" min="1" placeholder="可选" type="number"/><div class="button-row"><button class="primary" type="submit">保存映射</button><button class="secondary" id="cancelMapping" type="button">取消</button></div></form></dialog>
 </body></html>
