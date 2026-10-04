@@ -2,6 +2,8 @@
 
 独立运行的中文 Web 工具：定时读取豆瓣影视 **想看** 列表，将 IMDb ID 交给 Seerr 精确匹配媒体，提交电影或电视剧请求，由 Seerr 对接 Radarr / Sonarr。无需另外申请或填写 TMDB Token。
 
+适合已经使用 Seerr 和 Radarr / Sonarr 的自托管环境。支持 Docker Compose，浏览器配置，无需修改这些服务的源码。希望由 Agent 完成安装和配置，可直接使用下面的 [Agent 部署 Prompt](#让-agent-安装并配置)。
+
 ## 功能
 
 - 电影、电视剧分别开启；默认历史范围为最近 **30 天**，按天调整。
@@ -17,9 +19,13 @@
 
 ## Docker 部署
 
-在项目目录运行：
+需要 Docker Engine、Docker Compose v2 和可用的 Seerr。镜像在目标机器上从源码构建，无需预先下载项目专用镜像。
+
+获取源码并运行（将 `<仓库URL>` 替换为本仓库实际地址）：
 
 ```bash
+git clone <仓库URL> douban-reel
+cd douban-reel
 python3 scripts/init_env.py
 docker compose up -d --build
 ```
@@ -42,10 +48,23 @@ Docker 数据保存在命名卷 `sync-data`。正常停止容器不会删除数�
 
 1. 输入豆瓣用户 ID 或个人主页 URL。这里指个人主页 `/people/xxx/` 中的 `xxx`，不是昵称。
 2. 浏览器登录豆瓣电影，按 F12 → Network，刷新页面，选中发往 `movie.douban.com` 的页面请求，从 Request Headers 复制完整 `Cookie`。
-3. 在 UI 中粘贴 Cookie，点击“验证并保存 Cookie”。至少包含 `dbcl2` 和 `ck`。也支持 Cookie JSON 数组，非豆瓣域名的 Cookie 会过滤掉。原 Cookie 验证失败时不会覆盖已保存的 Cookie。
+3. 在 UI 中粘贴 Cookie，点击“验证并保存”。至少包含 `dbcl2` 和 `ck`。也支持 Cookie JSON 数组，非豆瓣域名的 Cookie 会过滤掉。原 Cookie 验证失败时不会覆盖已保存的 Cookie。
 4. 填入 Seerr 基础地址及 API Key（Seerr 设置 → 通用）。不要填写网页的 `/requests` 路径。
 5. 调整电影/电视剧开关、历史天数、同步间隔等，保存配置，再测试连接。
 6. 先“预览同步”，查看匹配结果；确认后“立即同步”，或启用定时同步并保存。
+7. 可选：填写 Bark 完整推送地址，保存配置。需要验证推送时点击“测试 Bark”；地址留空会保留已有值，点击“删除”才会移除。
+
+页面顶部的“保存配置”始终可见。Cookie 使用单独的“验证并保存”按钮录入。
+
+| 配置项 | 默认值 | 可选范围 / 说明 |
+| --- | --- | --- |
+| 电影 / 电视剧 | 都开启 | 分别开关 |
+| 历史范围 | 30 天 | 1–36500 天，按想看标记日期 |
+| 同步间隔 | 1440 分钟 | 15–10080 分钟；默认每天一次 |
+| 随机间隔上限 | 15 秒 | 2–60 秒；每次豆瓣请求间隔在 2 秒至上限之间随机 |
+| 无明确季号时 | 第一季 | 可改为当前全部普通季 |
+| 定时同步 | 关闭 | 保存配置后开始计时 |
+| Bark | 未配置 | 完整 HTTP(S) 推送地址，包含设备密钥 |
 
 Seerr 请求接口使用 TMDB ID，因此仍需要将豆瓣条目匹配到 TMDB 媒体。但 Seerr 自身提供 `imdb:tt…` 精确查询，这一步由 Seerr 完成，本工具只需 Seerr 地址和 API Key。
 
@@ -57,6 +76,94 @@ Seerr 需要事先配置好默认 Radarr / Sonarr 服务、质量配置和根目
 - 访问宿主机：`http://host.docker.internal:5055`（Compose 已配置 host-gateway）。
 - 访问其他设备：`http://192.168.1.100:5055`。
 - 不要用 `localhost:5055` 指代其他容器；容器中的 localhost 是本工具自身。
+
+## 让 Agent 安装并配置
+
+将下面的 Prompt 复制给有目标机器访问权限的 Agent，替换尖括号中的内容。无需把 Cookie、API Key、Bark 设备密钥或管理员密码写进 Prompt；用目标机器上的私密文件路径或已有服务配置作为来源。不使用的可选项填写“无”。
+
+```text
+请安装并配置开源项目「豆瓣映单 / Douban Reel」，完成部署与验证。
+
+部署信息：
+- 仓库 URL：<本仓库实际 URL>
+- 目标机器：<主机名 / SSH 别名；已在目标机器则直接操作>
+- 安装目录：<例如 /opt/douban-reel>
+- Web 监听地址与端口：<例如 NAS 的局域网 IP:8787，或反代使用的 127.0.0.1:8787>
+- 域名与反向代理：<可选；域名、DNS 与 Nginx Proxy Manager 等代理服务的访问方式；否则无>
+- Seerr 地址：<必须是 Douban Reel 容器可访问的基础地址>
+- Seerr API Key 来源：<目标机器上的私密文件路径 / 现有 Seerr 配置路径>
+- 豆瓣用户 ID / 个人主页：<账号 ID 或 https://www.douban.com/people/xxx/>
+- 豆瓣 Cookie 来源：<目标机器上的私密文件路径；或已有 Jellyfin 豆瓣同步插件的配置与密钥目录>
+- Bark 地址来源：<可选；私密文件路径，或已有 Jellyfin 豆瓣同步插件配置与密钥目录；否则无>
+- 电影同步：是
+- 电视剧同步：是
+- 历史范围：30 天
+- 同步间隔：1440 分钟（每天一次）
+- 豆瓣随机请求间隔上限：15 秒
+- 无明确季号时：只请求第一季
+- 开启定时同步：否（需要自动下载时改为是）
+
+请按以下要求完成：
+1. 阅读仓库 README 和适用的 AGENTS.md，检查目标机器的 Docker / Compose、端口和已有部署。
+   仅在指定目标机器部署；已在目标机器时不要 SSH 回本机。
+   已有安装时保留其管理员凭据、数据卷和现有设置，先备份再更新，不创建重复实例。
+2. 使用 Docker Compose 从源码构建。首次安装用 scripts/init_env.py 生成管理员凭据，
+   配置 .env 的 BIND_ADDRESS 和 PORT，并保持 .env 仅部署用户可读。
+   .env 已存在时不要覆盖，不在聊天、日志或命令行参数中输出任何敏感值。
+3. 使用提供的本地凭据来源配置 Seerr、豆瓣账号和 Cookie，再配置同步规则及可选 Bark。
+   可使用已认证的 Web UI 或 README 中的管理 API；Cookie 必须经过验证接口保存。
+   如来源是 Jellyfin 豆瓣同步插件，读取其配置及数据保护密钥，按插件的保护方式解密，
+   仅在内存中传递 Cookie / Bark 地址并导入本工具，不修改插件原配置。
+   若插件中有多个账号且无法确定目标，仅询问账号选择，不自行猜测。
+4. 如提供了域名与代理访问方式，配置对应 DNS 和反向代理，保留已有代理站点。
+   使用已提供或可签发的 HTTPS 证书，将本工具部署在域名根路径。
+5. 验证容器健康、Web 登录和 Seerr 连接，执行一次预览同步，检查条目匹配和失败原因。
+   预览不提交实际下载请求。开启定时同步为“是”时，在预览通过后启用定时任务，
+   允许按计划创建下载请求；否则保持关闭。不要为测试点击“立即同步”。
+   Bark 导入后检查已保存状态；除非我要求，测试过程中不要发送真实通知。
+6. 检查敏感值未进入仓库、备份未进入 Git、Cookie 与 Bark 地址不在 UI 回显。
+   确认数据卷持久化、服务自动重启，并留下更新和回滚方法。
+7. 最后报告访问地址、部署版本、验证结果、定时任务状态、凭据文件位置和管理命令，
+   不报告任何凭据内容。必要信息缺失时只询问缺失项，其余工作继续完成。
+```
+
+### Agent 使用的管理 API
+
+API 与网页使用相同的 HTTP Basic 管理员认证。写操作需请求头 `X-Requested-With: douban-reel`，JSON 请求需 `Content-Type: application/json`。凭据应从私密文件读取，在脚本内存中组装请求，不放进 shell 命令参数。
+
+| 操作 | 方法与路径 | 请求内容 |
+| --- | --- | --- |
+| 健康检查 | `GET /healthz` | 无需认证 |
+| 读取已保存配置 | `GET /api/config` | 仅返回非敏感配置及凭据是否已保存 |
+| 保存规则和服务连接 | `PUT /api/config` | 配置字段，可部分更新 |
+| 验证并保存 Cookie | `POST /api/cookie` | `douban_user`、`cookie` |
+| 验证豆瓣 / Seerr | `POST /api/test/douban`、`POST /api/test/seerr` | 无请求体 |
+| 测试 Bark（会发真实通知） | `POST /api/test/bark` | 无请求体 |
+| 预览同步 | `POST /api/sync?preview=true` | 不提交下载请求 |
+| 开始实际同步 | `POST /api/sync?preview=false` | 会提交下载请求 |
+| 查询任务与登录状态 | `GET /api/status` | 包含运行状态、记录与 `cookie_health` |
+| 停止任务 | `POST /api/stop` | 已提交请求不会撤销 |
+
+`PUT /api/config` 的字段与示例（尖括号是占位符，替换后再提交）：
+
+```json
+{
+  "seerr_url": "http://host.docker.internal:5055",
+  "seerr_api_key": "<从私密文件读取>",
+  "bark_url": "<可选，从私密文件读取；不配置则省略>",
+  "movies": true,
+  "tv": true,
+  "history_days": 30,
+  "interval_minutes": 1440,
+  "request_delay": 15,
+  "tv_seasons": "first",
+  "enabled": false
+}
+```
+
+`douban_cookie` 不允许通过配置接口写入。使用 `POST /api/cookie` 单独导入，验证成功后才加密保存。`seerr_api_key` / `bark_url` 留空时保留已存值；删除 Bark 地址用 `DELETE /api/bark`。删除 Cookie 用 `DELETE /api/cookie`，同时关闭后续定时任务。
+
+轮询 `/api/status`，根据预览任务返回的 `run_id` 找到对应运行记录；应检查该记录的 `state` 和 `message`，不能只凭 HTTP 200 或 `running=false` 判断成功。`partial`、`failed`、`stopped` 等状态需说明原因。没有历史范围内的条目时，预览可能正常处理 0 条，这不等于已验证下载链路。
 
 ## 同步规则
 
@@ -108,4 +215,4 @@ uv pip install --python .venv/bin/python -r requirements-dev.txt
 
 仓库只包含源码、测试、部署模板与文档。`.env.example` 不包含密码，实际 `.env`、运行数据库、加密密钥、日志、截图及备份均被忽略。测试中的 Cookie、密码和 Token 是用于模拟接口的虚构值。
 
-提交 Issue、PR 或日志前，请移除真实豆瓣 Cookie、Seerr API Key 与管理员密码。不要上传数据卷或含登录信息的截图。
+提交 Issue、PR 或日志前，请移除真实豆瓣 Cookie、Seerr API Key、Bark 推送地址与管理员密码。不要上传数据卷或含登录信息的截图。
