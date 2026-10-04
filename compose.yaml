@@ -1,0 +1,26 @@
+services:
+  douban-seerr:
+    build: .
+    image: douban-seerr:local
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8787}:8787"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请先运行 python3 scripts/init_env.py 或创建 .env}
+      TZ: Asia/Shanghai
+      DATA_DIR: /data
+    volumes:
+      - sync-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 45s
+volumes:
+  sync-data:
