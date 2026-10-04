@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,7 @@ def now():
 
 class Store:
     def __init__(self, directory):
+        self.config_lock = threading.RLock()
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         key_path = self.directory / 'secret.key'
@@ -51,6 +53,10 @@ class Store:
             yield db
 
     def config(self):
+        with self.config_lock:
+            return self._read_config()
+
+    def _read_config(self):
         with self.connect() as db:
             row = db.execute('SELECT value FROM settings WHERE id=1').fetchone()
         data = json.loads(row['value']) if row else {}
@@ -60,6 +66,10 @@ class Store:
         return Config(**data)
 
     def save_config(self, config):
+        with self.config_lock:
+            self._save_config(config)
+
+    def _save_config(self, config):
         data = config.model_dump()
         for key in SECRETS:
             if data[key]:
@@ -67,8 +77,15 @@ class Store:
         with self.connect() as db:
             db.execute('INSERT OR REPLACE INTO settings VALUES (1, ?)', (json.dumps(data),))
 
-    def public_config(self):
-        data = self.config().model_dump()
+    def update_config(self, change):
+        # A short settings lock, independent of the long-running synchronization lock.
+        with self.config_lock:
+            updated = change(self._read_config())
+            self._save_config(updated)
+            return updated
+
+    def public_config(self, config=None):
+        data = (config if config is not None else self.config()).model_dump()
         for key in SECRETS:
             data[key + '_saved'] = bool(data.pop(key))
         return data

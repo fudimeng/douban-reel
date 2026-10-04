@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.clients import Clients, DoubanError, SyncError, parse_subject, parse_wish
+from app.clients import Clients, DoubanError, RequestGate, SyncError, parse_subject, parse_wish
 from app.db import Store
 from app.main import create_app
 from app.models import Config
@@ -28,7 +28,7 @@ def subject_html(title='电影', tv=False, imdb='tt1234567'):
 
 
 def configuration(**kwargs):
-    return Config(**dict({'douban_user':'tester', 'douban_cookie':'dbcl2="123:abc"; ck=xyz', 'seerr_url':'http://seerr:5055', 'seerr_api_key':'secret-seerr', 'tmdb_token':'secret-tmdb'}, **kwargs))  # pragma: allowlist secret (synthetic test credentials)
+    return Config(**dict({'douban_user':'tester', 'douban_cookie':'dbcl2="123:abc"; ck=xyz', 'seerr_url':'http://seerr:5055', 'seerr_api_key':'secret-seerr'}, **kwargs))  # pragma: allowlist secret (synthetic test credentials)
 
 
 class NoWait:
@@ -61,7 +61,7 @@ def test_cookie_encrypted_and_never_exposed(tmp_path):
     store.save_config(config)
     assert store.config() == config
     raw = store.rows('SELECT value FROM settings')[0]['value']
-    for secret in (config.douban_cookie, config.seerr_api_key, config.tmdb_token):
+    for secret in (config.douban_cookie, config.seerr_api_key):
         assert secret not in raw
         assert secret not in json.dumps(store.public_config())
     assert store.public_config()['douban_cookie_saved'] is True
@@ -143,7 +143,7 @@ def test_tv_subtracts_pending_and_existing_seasons():
 
 
 def test_match_is_conservative():
-    client=client_with(lambda request:httpx.Response(200,json={'movie_results':[{'id':1},{'id':2}]}))
+    client=client_with(lambda request:httpx.Response(200,json={'results':[{'id':1,'mediaType':'movie'},{'id':2,'mediaType':'movie'}]}))
     with pytest.raises(SyncError):
         client.match({'media_type':'movie','imdb':'tt1234567','season':None})
     with pytest.raises(SyncError):
@@ -152,7 +152,7 @@ def test_match_is_conservative():
 
 
 def test_safe_error_excludes_upstream_body_and_key():
-    client=client_with(lambda request:httpx.Response(401,text='secret-seerr secret-tmdb'))
+    client=client_with(lambda request:httpx.Response(401,text='secret-seerr'))
     with pytest.raises(SyncError) as error:
         client.api('Seerr','GET','/auth/me')
     assert 'secret' not in str(error.value)
@@ -251,10 +251,9 @@ def test_auth_csrf_and_no_secret_echo(web):
     assert web.get('/healthz',auth=None).status_code==200
     assert web.put('/api/config',json={},headers={'X-Requested-With':''}).status_code==403
     assert web.put('/api/config',json={},headers={'Sec-Fetch-Site':'cross-site'}).status_code==403
-    result=web.put('/api/config',json={'seerr_api_key':'secret','tmdb_token':'token','history_days':14})
+    result=web.put('/api/config',json={'seerr_api_key':'secret','history_days':14})
     assert result.status_code==200
     assert '"secret"' not in result.text
-    assert '"token"' not in result.text
     assert result.json()['history_days']==14
     web.put('/api/config',json={'seerr_api_key':''})
     assert web.app.state.store.config().seerr_api_key=='secret'  # pragma: allowlist secret (synthetic test credential)
@@ -307,16 +306,17 @@ def test_complete_pipeline_with_real_parsers_and_http_clients(tmp_path):
         if host=='movie.douban.com':
             return httpx.Response(200,text=subject_html())
         assert 'cookie' not in request.headers
-        if host=='api.themoviedb.org':
-            assert request.headers['authorization']=='Bearer secret-tmdb'
-            return httpx.Response(200,json={'movie_results':[{'id':42}]})
+        assert host=='seerr'
         assert request.headers['x-api-key']=='secret-seerr'
+        if path=='/api/v1/search':
+            assert request.url.params['query']=='imdb:tt1234567'
+            return httpx.Response(200,json={'results':[{'id':42,'mediaType':'movie'}]})
         if request.method=='POST':
             requests.append(json.loads(request.content))
             stored=True
             # Simulates server acceptance followed by a lost response.
             raise httpx.ReadTimeout('upstream secret',request=request)
-        return httpx.Response(200,json={'id':42,'mediaInfo':{'status':2 if stored else 1}})
+        return httpx.Response(200,json={'id':42,'externalIds':{'imdbId':'tt1234567'},'mediaInfo':{'status':2 if stored else 1}})
     def factory(config,stop):
         return Clients(config,NoWait(),httpx.MockTransport(handler))
     store=Store(tmp_path);store.save_config(configuration())
@@ -329,3 +329,177 @@ def test_complete_pipeline_with_real_parsers_and_http_clients(tmp_path):
     run_service(service)
     assert len(requests)==1
     assert store.rows('SELECT state FROM items')[0]['state']=='existing'
+
+
+def test_seerr_matching_validates_type_and_imdb():
+    external={'id':'tt1234567'}
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        assert request.url.host=='seerr'
+        assert 'authorization' not in request.headers
+        assert 'cookie' not in request.headers
+        if request.url.path.endswith('/search'):
+            assert request.url.params['query']=='imdb:tt1234567'
+            return httpx.Response(200,json={'results':[{'id':42,'mediaType':'movie'},{'id':1,'mediaType':'person'}]})
+        return httpx.Response(200,json={'externalIds':{'imdbId':external['id']}})
+    client=client_with(handler)
+    details={'media_type':'movie','imdb':'tt1234567','season':None}
+    assert client.match(details)=={'media_type':'movie','tmdb_id':42,'season':None}
+    external['id']='tt7654321'
+    with pytest.raises(SyncError,match='IMDb ID 不一致'):
+        client.match(details)
+    with pytest.raises(SyncError,match='唯一匹配'):
+        client.match({**details,'media_type':'tv'})
+    client.close()
+
+
+def test_no_tmdb_token_needed_and_old_settings_migrate(tmp_path):
+    store=Store(tmp_path)
+    store.save_config(configuration())
+    raw=json.loads(store.rows('SELECT value FROM settings')[0]['value'])
+    raw['tmdb_token']='obsolete-encrypted-token'
+    store.execute('UPDATE settings SET value=? WHERE id=1',(json.dumps(raw),))
+    assert store.config().ready()
+    assert 'tmdb_token_saved' not in store.public_config()
+    store.update_config(lambda current: current.model_copy(update={'history_days':7}))
+    assert 'tmdb_token' not in json.loads(store.rows('SELECT value FROM settings')[0]['value'])
+
+
+def test_running_settings_and_mapping_use_snapshot_until_next_task(web):
+    started,release=threading.Event(),threading.Event()
+    captured=[]
+    class Blocked(FakeClients):
+        def __init__(self, config, stop):
+            super().__init__(config,stop)
+            captured.append(config)
+        def verify_douban(self):
+            started.set()
+            assert release.wait(5)
+            return 'ok'
+    store,service=web.app.state.store,web.app.state.sync
+    original=configuration(enabled=True)
+    store.save_config(original)
+    scope=scope_for(original)
+    store.item(scope,{'subject':'1','title':'Movie'},'failed','no match')
+    service.clients_factory=Blocked
+    service.start(preview=True)
+    try:
+        assert started.wait(2)
+        response=web.put('/api/config',json={'history_days':7,'movies':False,'request_delay':15,'interval_minutes':60,'enabled':False})
+        assert response.status_code==200
+        assert web.get('/api/status').json()['settings_pending']
+        assert web.get('/api/status').json()['next_run'] is None
+        assert web.put('/api/mappings/1',json={'media_type':'movie','tmdb_id':99}).status_code==200
+        assert captured[0]==original
+    finally:
+        release.set();service.thread.join(3)
+    assert not service.running
+    # The active task kept its original media switches and mapping.
+    row=store.rows('SELECT * FROM items WHERE subject=? AND scope=?',('1',scope))[0]
+    assert row['tmdb_id']==1
+    assert row['state']=='preview'
+    run_service(service,True)
+    assert captured[1].history_days==7
+    assert not captured[1].movies
+    assert service.next_run is None
+    assert store.rows('SELECT state FROM items WHERE subject=? AND scope=?',('1',scope))[0]['state']=='disabled'
+    # Enabling the movie switch later uses the saved manual mapping.
+    web.put('/api/config',json={'movies':True})
+    run_service(service,True)
+    assert store.rows('SELECT tmdb_id FROM items WHERE subject=? AND scope=?',('1',scope))[0]['tmdb_id']==99
+
+
+def test_cookie_validation_does_not_block_sync_or_overwrite_new_settings(web,monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    validation_started,validation_release=threading.Event(),threading.Event()
+    worker_started,worker_release=threading.Event(),threading.Event()
+    class Blocked(FakeClients):
+        def verify_douban(self):
+            worker_started.set()
+            assert worker_release.wait(5)
+            return 'ok'
+    def verify(self):
+        validation_started.set()
+        assert validation_release.wait(5)
+        return '登录有效'
+    store,service=web.app.state.store,web.app.state.sync
+    store.save_config(configuration())
+    service.clients_factory=Blocked
+    service.start(True)
+    assert worker_started.wait(2)
+    monkeypatch.setattr(Clients,'verify_douban',verify)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future=executor.submit(web.post,'/api/cookie',json={'cookie':'dbcl2=new; ck=y','douban_user':'tester'})
+        try:
+            assert validation_started.wait(2)
+            assert web.put('/api/config',json={'history_days':77,'request_delay':15}).status_code==200
+            assert service.running
+            validation_release.set()
+            assert future.result(timeout=3).status_code==200
+            assert store.config().history_days==77
+            assert store.config().request_delay==15
+            assert store.config().douban_cookie=='dbcl2=new; ck=y'
+            assert service.active_config.douban_cookie==configuration().douban_cookie
+        finally:
+            validation_release.set();worker_release.set();service.thread.join(3)
+    assert not service.running
+
+
+def test_cookie_can_be_deleted_while_running(web):
+    started,release=threading.Event(),threading.Event()
+    class Blocked(FakeClients):
+        def verify_douban(self):
+            started.set()
+            assert release.wait(5)
+            return 'ok'
+    store,service=web.app.state.store,web.app.state.sync
+    store.save_config(configuration(enabled=True))
+    service.clients_factory=Blocked
+    service.start(True)
+    try:
+        assert started.wait(2)
+        assert web.delete('/api/cookie').status_code==200
+        assert service.running
+        assert service.active_config.douban_cookie
+        assert not store.config().douban_cookie
+        assert not store.config().enabled
+    finally:
+        release.set();service.thread.join(3)
+    assert service.next_run is None
+    with pytest.raises(SyncError):service.start()
+
+
+def test_parallel_partial_config_updates_are_merged(web):
+    from concurrent.futures import ThreadPoolExecutor
+    barrier=threading.Barrier(2)
+    def update(data):
+        barrier.wait(timeout=3)
+        return web.put('/api/config',json=data)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        a=executor.submit(update,{'history_days':37})
+        b=executor.submit(update,{'interval_minutes':90})
+        assert a.result(timeout=3).status_code==200
+        assert b.result(timeout=3).status_code==200
+    config=web.app.state.store.config()
+    assert config.history_days==37
+    assert config.interval_minutes==90
+
+
+def test_cookie_verification_and_sync_share_rate_limit(monkeypatch):
+    clock={'time':100.0}
+    waits=[]
+    class ClockStop(NoWait):
+        def wait(self, seconds):
+            waits.append(seconds)
+            clock['time']+=seconds
+            return False
+    monkeypatch.setattr('app.clients.time.monotonic',lambda:clock['time'])
+    gate=RequestGate()
+    transport=httpx.MockTransport(lambda request:httpx.Response(200,text='<html></html>'))
+    sync_client=Clients(configuration(),ClockStop(),transport,gate)
+    verification_client=Clients(configuration(),ClockStop(),transport,gate)
+    sync_client.douban('https://movie.douban.com/subject/1/')
+    verification_client.douban('https://www.douban.com/mine/')
+    assert waits==[0,5]
+    sync_client.close();verification_client.close()

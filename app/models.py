@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator
 
 
-SECRETS = ('douban_cookie', 'seerr_api_key', 'tmdb_token')
+SECRETS = ('douban_cookie', 'seerr_api_key')
 
 
 class Config(BaseModel):
@@ -14,7 +14,6 @@ class Config(BaseModel):
     douban_cookie: str = ''
     seerr_url: str = ''
     seerr_api_key: str = ''
-    tmdb_token: str = ''
     enabled: bool = False
     movies: bool = True
     tv: bool = True
@@ -72,17 +71,17 @@ class Config(BaseModel):
                 raise ValueError('Cookie 包含非法字符')
         return value
 
-    @field_validator('seerr_api_key', 'tmdb_token')
+    @field_validator('seerr_api_key')
     @classmethod
     def token(cls, value):
         value = value.strip()
         if any(c.isspace() for c in value) or len(value) > 4096:
-            raise ValueError('密钥不可包含空格或换行；TMDB 请仅粘贴 token 本身')
+            raise ValueError('密钥不可包含空格或换行')
         return value
 
     def ready(self):
         return all((self.douban_user, self.douban_cookie, self.seerr_url,
-                    self.seerr_api_key, self.tmdb_token)) and (self.movies or self.tv)
+                    self.seerr_api_key)) and (self.movies or self.tv)
 
 
 class Mapping(BaseModel):

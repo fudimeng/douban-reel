@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const labels = {submitted:'已提交', existing:'已存在', failed:'需要处理', preview:'预览', disabled:'类型已关闭', mapped:'已映射', running:'运行中', complete:'已完成', partial:'部分失败', stopped:'已停止', interrupted:'已中断'};
 let currentConfig = {}, items = [], dirty = false, running = false;
-const fields = ['douban_user','seerr_url','seerr_api_key','tmdb_token','movies','tv','history_days','interval_minutes','request_delay','tv_seasons','enabled'];
+const fields = ['douban_user','seerr_url','seerr_api_key','movies','tv','history_days','interval_minutes','request_delay','tv_seasons','enabled'];
 function notice(message, error=false) { $('notice').textContent=message; $('notice').className='notice'+(error?' error':''); $('notice').hidden=false; }
 async function api(path, method='GET', body) {
   const response = await fetch('/api'+path, {method, headers:{'Content-Type':'application/json','X-Requested-With':'douban-reel'}, ...(body===undefined?{}:{body:JSON.stringify(body)})});
@@ -16,7 +16,6 @@ function applyConfig(config) {
   for(const key of fields) { const el=$(key); if(el.type==='checkbox') el.checked=!!config[key]; else el.value=config[key]??''; }
   $('cookieStatus').textContent=config.douban_cookie_saved?'Cookie 已保存':'未配置';
   $('seerrSaved').textContent=config.seerr_api_key_saved?'已保存 · 留空保留':'';
-  $('tmdbSaved').textContent=config.tmdb_token_saved?'已保存 · 留空保留':'';
   $('deleteCookie').disabled=!config.douban_cookie_saved;
   dirty=false; $('dirty').textContent='配置已加载';
 }
@@ -33,7 +32,7 @@ async function refresh(){
   const state=await api('/status'); running=state.running;items=state.items;renderItems();
   $('submitted').textContent=state.counts.submitted||0;$('existing').textContent=state.counts.existing||0;$('failed').textContent=state.counts.failed||0;
   $('schedulerState').textContent=state.running?'任务进行中':state.next_run?'定时同步已开启':'定时同步已关闭';
-  $('nextRun').textContent=state.next_run?'下次运行 '+dateText(state.next_run):'可手动预览或同步';
+  $('nextRun').textContent=state.settings_pending?'配置已更新，将在下次任务生效':state.next_run?'下次运行 '+dateText(state.next_run):'可手动预览或同步';
   $('runningBadge').textContent=state.running?'运行中':'空闲';$('stop').hidden=!state.running;
   $('sync').disabled=state.running;$('preview').disabled=state.running;
   $('runs').replaceChildren();
@@ -41,10 +40,10 @@ async function refresh(){
   for(const run of state.runs){const el=document.createElement('div');el.className='run';const top=document.createElement('div');top.className='top';const time=document.createElement('time');time.textContent=dateText(run.started);top.append(time,badge(run.state));const p=document.createElement('p');p.textContent=run.message||'正在读取与匹配豆瓣条目…';const small=document.createElement('small');small.textContent=(run.preview?'预览任务':'同步任务')+' · 已处理 '+run.processed+' 条';el.append(top,p,small);$('runs').append(el);}
 }
 fields.forEach(key=>$(key).addEventListener('input',()=>{dirty=true;$('dirty').textContent='有未保存的修改';}));
-$('settingsForm').onsubmit=busy($('settingsForm').querySelector('[type=submit]'),async()=>{applyConfig(await api('/config','PUT',configData()));notice('配置已保存');await refresh();});
+$('settingsForm').onsubmit=busy($('settingsForm').querySelector('[type=submit]'),async()=>{applyConfig(await api('/config','PUT',configData()));notice(running?'配置已保存，下次任务生效；当前任务继续使用启动时的配置':'配置已保存');await refresh();});
 $('saveCookie').onclick=busy($('saveCookie'),async()=>{notice('正在验证豆瓣登录与想看列表，请稍候…');const data=await api('/cookie','POST',{cookie:$('cookie').value,douban_user:$('douban_user').value});$('cookie').value='';currentConfig.douban_cookie_saved=true;$('cookieStatus').textContent='Cookie 已保存';$('deleteCookie').disabled=false;notice(data.message);});
 $('deleteCookie').onclick=busy($('deleteCookie'),async()=>{if(!confirm('删除 Cookie 并关闭定时同步？'))return;const data=await api('/cookie','DELETE');$('cookie').value='';applyConfig(await api('/config'));notice(data.message);await refresh();});
-for(const [id,target] of [['testCookie','douban'],['testSeerr','seerr'],['testTmdb','tmdb']])$(id).onclick=busy($(id),async()=>{if(dirty&&target!=='douban')throw new Error('请先保存配置，再测试连接');notice('正在验证连接…');notice((await api('/test/'+target,'POST')).message);});
+for(const [id,target] of [['testCookie','douban'],['testSeerr','seerr']])$(id).onclick=busy($(id),async()=>{if(dirty&&target!=='douban')throw new Error('请先保存配置，再测试连接');notice('正在验证连接…');notice((await api('/test/'+target,'POST')).message);});
 for(const [id,preview] of [['sync',false],['preview',true]])$(id).onclick=busy($(id),async()=>{if(dirty)throw new Error('配置有未保存的修改，请先保存');await api('/sync?preview='+preview,'POST');notice(preview?'预览任务已开始，不会提交下载请求':'同步任务已开始');await refresh();});
 $('stop').onclick=busy($('stop'),async()=>notice((await api('/stop','POST')).message));
 $('filter').onchange=renderItems;

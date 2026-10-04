@@ -117,20 +117,17 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
     @app.put('/api/config', dependencies=[Depends(auth)])
     def save_config(data: dict):
         service = app.state.sync
-        if not service.lock.acquire(blocking=False):
-            raise HTTPException(409, '任务运行中，请完成或停止后再修改配置')
-        try:
-            old = store().config().model_dump()
+        def update(current):
+            old = current.model_dump()
             allowed = set(old) - {'douban_cookie'}
-            old.update({k: v for k, v in data.items() if k in allowed and not (k in ('seerr_api_key', 'tmdb_token') and v == '')})
+            old.update({k: v for k, v in data.items() if k in allowed and not (k == 'seerr_api_key' and v == '')})
             updated = parse_config(old)
             if updated.enabled and not updated.ready():
                 raise HTTPException(400, '开启定时同步前，请填写全部连接信息并验证保存 Cookie')
-            store().save_config(updated)
-            service.reschedule()
-            return store().public_config()
-        finally:
-            service.lock.release()
+            return updated
+        updated = store().update_config(update)
+        service.reschedule()
+        return store().public_config(updated)
 
     class CookieInput(BaseModel):
         cookie: str
@@ -139,61 +136,64 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
     @app.post('/api/cookie', dependencies=[Depends(auth)])
     def save_cookie(data: CookieInput):
         service = app.state.sync
-        if not service.lock.acquire(blocking=False):
-            raise HTTPException(409, '已有任务运行，请稍后导入 Cookie')
+        if not service.validation_lock.acquire(blocking=False):
+            raise HTTPException(409, '另一个连接或 Cookie 验证正在进行，请稍后重试')
         client = None
         try:
             config = parse_config({**store().config().model_dump(), 'douban_cookie': data.cookie, 'douban_user': data.douban_user})
             if not config.douban_cookie or not config.douban_user:
                 raise HTTPException(400, '请填写豆瓣用户 ID 和 Cookie')
-            client = Clients(config)
+            client = Clients(config, request_gate=service.douban_gate)
             message = client.verify_douban()
-            store().save_config(config)
+            # Verification may take time: merge only the verified credentials into the latest settings.
+            store().update_config(lambda current: parse_config({**current.model_dump(),
+                'douban_cookie': config.douban_cookie, 'douban_user': config.douban_user}))
             service.reschedule()
             return {'message': message + '；Cookie 已加密保存'}
         finally:
             if client:
                 client.close()
-            service.lock.release()
+            service.validation_lock.release()
 
     @app.delete('/api/cookie', dependencies=[Depends(auth)])
     def delete_cookie():
         service = app.state.sync
-        if not service.lock.acquire(blocking=False):
-            raise HTTPException(409, '请先停止运行中的任务')
+        if not service.validation_lock.acquire(blocking=False):
+            raise HTTPException(409, 'Cookie 正在验证，请稍后删除')
         try:
-            config = store().config()
-            config.douban_cookie, config.enabled = '', False
-            store().save_config(config)
+            store().update_config(lambda current: current.model_copy(update={'douban_cookie': '', 'enabled': False}))
             service.reschedule()
-            return {'message': 'Cookie 已删除，定时同步已关闭'}
+            return {'message': 'Cookie 已删除，定时同步已关闭；当前任务继续使用启动时的 Cookie，可手动停止'}
         finally:
-            service.lock.release()
+            service.validation_lock.release()
 
     @app.post('/api/test/{target}', dependencies=[Depends(auth)])
     def test_connection(target: str):
-        if target not in ('douban', 'seerr', 'tmdb'):
+        if target not in ('douban', 'seerr'):
             raise HTTPException(404)
         service = app.state.sync
-        if not service.lock.acquire(blocking=False):
-            raise HTTPException(409, '已有任务运行，请稍后验证')
-        client = Clients(store().config())
+        if not service.validation_lock.acquire(blocking=False):
+            raise HTTPException(409, '另一个连接或 Cookie 验证正在进行，请稍后重试')
+        client = None
         try:
+            client = Clients(store().config(), request_gate=service.douban_gate)
             if target == 'douban':
                 message = client.verify_douban()
             else:
-                client.api('Seerr' if target == 'seerr' else 'TMDB', 'GET', '/auth/me' if target == 'seerr' else '/configuration')
+                client.api('Seerr', 'GET', '/auth/me')
                 message = target.upper() + ' 连接成功'
             return {'message': message}
         finally:
-            client.close()
-            service.lock.release()
+            if client:
+                client.close()
+            service.validation_lock.release()
 
     @app.get('/api/status', dependencies=[Depends(auth)])
     def status():
         db, service = store(), app.state.sync
         scope = scope_for(db.config())
         return {'running': service.running, 'next_run': service.next_run.isoformat() if service.next_run else None,
+                'settings_pending': service.active_config is not None and service.active_config != db.config(),
                 'runs': db.rows('SELECT * FROM runs ORDER BY id DESC LIMIT 20'),
                 'items': db.rows('SELECT * FROM items WHERE scope=? ORDER BY updated DESC LIMIT 200', (scope,)),
                 'counts': {r['state']: r['n'] for r in db.rows('SELECT state,COUNT(*) n FROM items WHERE scope=? GROUP BY state', (scope,))}}
@@ -214,19 +214,15 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
     def mapping(subject: str, data: Mapping):
         if not subject.isdigit():
             raise HTTPException(400, '豆瓣 ID 必须为数字')
-        service = app.state.sync
-        if not service.lock.acquire(blocking=False):
-            raise HTTPException(409, '请等待任务完成后设置映射')
-        try:
+        with store().config_lock, store().connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             scope = scope_for(store().config())
-            rows = store().rows('SELECT state FROM items WHERE scope=? AND subject=?', (scope, subject))
+            rows = db.execute('SELECT state FROM items WHERE scope=? AND subject=?', (scope, subject)).fetchall()
             if not rows or rows[0]['state'] in ('submitted', 'existing'):
                 raise HTTPException(400, '仅支持为尚未同步的列表条目设置映射')
-            store().execute('INSERT OR REPLACE INTO mappings VALUES (?,?)', (subject, data.model_dump_json()))
-            store().execute("UPDATE items SET state='mapped',message='映射已保存，下次预览或同步生效' WHERE scope=? AND subject=?", (scope, subject))
+            db.execute('INSERT OR REPLACE INTO mappings VALUES (?,?)', (subject, data.model_dump_json()))
+            db.execute("UPDATE items SET state='mapped',message='映射已保存，下次预览或同步生效' WHERE scope=? AND subject=?", (scope, subject))
             return {'message': '映射已保存，请先运行预览核对'}
-        finally:
-            service.lock.release()
 
     return app
 

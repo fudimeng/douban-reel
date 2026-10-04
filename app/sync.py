@@ -4,7 +4,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .clients import Clients, DoubanError, SyncError, parse_subject
+from .clients import Clients, DoubanError, RequestGate, SyncError, parse_subject
 from .db import now
 
 
@@ -17,6 +17,9 @@ class SyncService:
         self.store = store
         self.clients_factory = clients_factory
         self.lock = threading.Lock()
+        self.validation_lock = threading.Lock()
+        self.douban_gate = RequestGate()
+        self.active_config = None
         self.stop = threading.Event()
         self.thread = None
         self.next_run = None
@@ -27,31 +30,38 @@ class SyncService:
         return self.lock.locked()
 
     def reschedule(self):
-        config = self.store.config()
-        self.next_run = datetime.now(timezone.utc) + timedelta(minutes=config.interval_minutes) if config.enabled and config.ready() else None
+        with self.store.config_lock:
+            config = self.store.config()
+            self.next_run = datetime.now(timezone.utc) + timedelta(minutes=config.interval_minutes) if config.enabled and config.ready() else None
 
     def start(self, preview=False):
         if not self.lock.acquire(blocking=False):
-            raise SyncError('已有任务或连接验证正在运行，请等待完成')
+            raise SyncError('已有同步任务正在运行，请等待完成')
         try:
-            config = self.store.config()
-            if not config.ready():
-                raise SyncError('请先配置豆瓣用户、Cookie、Seerr 和 TMDB，并开启至少一种媒体类型')
+            with self.store.config_lock:
+                config = self.store.config()
+                mappings = {row['subject']: json.loads(row['value']) for row in self.store.rows('SELECT subject,value FROM mappings')}
+                if not config.ready():
+                    raise SyncError('请先配置豆瓣用户、Cookie 和 Seerr，并开启至少一种媒体类型')
             run_id = self.store.execute("INSERT INTO runs(started,preview,state) VALUES (?,?,'running')", (now(), int(preview)))
             self.stop.clear()
-            self.thread = threading.Thread(target=self.run, args=(run_id, config, preview), daemon=True)
+            self.active_config = config
+            self.thread = threading.Thread(target=self.run, args=(run_id, config, preview, mappings), daemon=True)
             self.thread.start()
             return run_id
         except Exception:
+            self.active_config = None
             self.lock.release()
             raise
 
-    def run(self, run_id, config, preview):
+    def run(self, run_id, config, preview, mappings):
         client = None
         processed, errors = 0, 0
         state, message = 'complete', ''
         try:
             client = self.clients_factory(config, self.stop)
+            if isinstance(client, Clients):
+                client.gate = self.douban_gate
             client.verify_douban()
             cutoff = datetime.now(ZoneInfo('Asia/Shanghai')).date() - timedelta(days=config.history_days - 1)
             scope = scope_for(config)
@@ -66,9 +76,8 @@ class SyncService:
                 try:
                     if not entry['marked']:
                         raise SyncError('无法读取想看日期，不能确认历史范围，请检查豆瓣条目')
-                    mapping = self.store.rows('SELECT value FROM mappings WHERE subject=?', (entry['subject'],))
-                    if mapping:
-                        match = json.loads(mapping[0]['value'])
+                    if entry['subject'] in mappings:
+                        match = mappings[entry['subject']]
                     else:
                         details = parse_subject(client.douban(f"https://movie.douban.com/subject/{entry['subject']}/"))
                         if not (config.movies if details['media_type'] == 'movie' else config.tv):
@@ -101,11 +110,15 @@ class SyncService:
             self.store.execute('UPDATE runs SET finished=?,state=?,message=?,processed=? WHERE id=?', (now(), state, message, processed, run_id))
             if not preview:
                 self.reschedule()
+            self.active_config = None
             self.lock.release()
 
     def tick(self):
-        if self.next_run and datetime.now(timezone.utc) >= self.next_run and not self.running:
-            try:
-                self.start()
-            except SyncError:
-                self.reschedule()
+        # Serialize the scheduling decision with configuration writes so disabling
+        # the timer cannot race a stale scheduling decision.
+        with self.store.config_lock:
+            if self.next_run and datetime.now(timezone.utc) >= self.next_run and not self.running:
+                try:
+                    self.start()
+                except SyncError:
+                    self.reschedule()

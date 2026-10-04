@@ -85,12 +85,26 @@ def parse_subject(html):
     return {'imdb': imdb[0] if imdb else None, 'media_type': kind, 'season': season}
 
 
+class RequestGate:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.last_request = 0.0
+
+    def wait(self, interval, stop):
+        with self.lock:
+            delay = max(0, interval - (time.monotonic() - self.last_request))
+            if stop.wait(delay):
+                return False
+            self.last_request = time.monotonic()
+            return True
+
+
 class Clients:
-    def __init__(self, config, stop=None, transport=None):
+    def __init__(self, config, stop=None, transport=None, request_gate=None):
         self.config = config
         self.stop = stop or threading.Event()
         self.http = httpx.Client(timeout=30, follow_redirects=False, transport=transport)
-        self.last_douban = 0.0
+        self.gate = request_gate or RequestGate()
 
     def close(self):
         self.http.close()
@@ -98,10 +112,8 @@ class Clients:
     def douban(self, url, redirects=0):
         if urlsplit(url).hostname not in ('movie.douban.com', 'www.douban.com') or urlsplit(url).scheme != 'https':
             raise DoubanError('豆瓣分页地址无效，已停止')
-        delay = max(0, self.config.request_delay - (time.monotonic() - self.last_douban))
-        if self.stop.wait(delay):
+        if not self.gate.wait(self.config.request_delay, self.stop):
             raise SyncError('任务已停止')
-        self.last_douban = time.monotonic()
         try:
             response = self.http.get(url, headers={
                 'Cookie': self.config.douban_cookie,
@@ -151,12 +163,10 @@ class Clients:
     def api(self, service, method, path, **kwargs):
         if self.stop.is_set():
             raise SyncError('任务已停止')
-        if service == 'Seerr':
-            url = self.config.seerr_url + '/api/v1' + path
-            headers = {'X-Api-Key': self.config.seerr_api_key}
-        else:
-            url = 'https://api.themoviedb.org/3' + path
-            headers = {'Authorization': 'Bearer ' + self.config.tmdb_token}
+        if service != 'Seerr':
+            raise SyncError('仅通过 Seerr 查询媒体数据')
+        url = self.config.seerr_url + '/api/v1' + path
+        headers = {'X-Api-Key': self.config.seerr_api_key}
         try:
             response = self.http.request(method, url, headers=headers, **kwargs)
         except httpx.HTTPError:
@@ -171,11 +181,16 @@ class Clients:
     def match(self, details):
         if not details['imdb']:
             raise SyncError('豆瓣条目没有 IMDb ID，请手动指定 TMDB 映射')
-        data = self.api('TMDB', 'GET', '/find/' + details['imdb'], params={'external_source': 'imdb_id', 'language': 'zh-CN'})
+        data = self.api('Seerr', 'GET', '/search', params={'query': 'imdb:' + details['imdb'], 'language': 'zh-CN', 'page': 1})
         kind = details['media_type']
-        results = data.get('movie_results' if kind == 'movie' else 'tv_results', [])
+        results = [row for row in data.get('results', []) if row.get('mediaType') == kind]
         if len(results) != 1:
             raise SyncError('IMDb 未能唯一匹配对应类型的 TMDB 条目，请手动指定映射')
+        # Older compatible servers may treat an IMDb query as a title search.
+        # Recheck the external ID so a fuzzy result can never create a request.
+        matched = self.api('Seerr', 'GET', f"/{kind}/{results[0]['id']}")
+        if (matched.get('externalIds') or {}).get('imdbId') != details['imdb']:
+            raise SyncError('Seerr 匹配结果的 IMDb ID 不一致，请手动指定映射')
         return {'media_type': kind, 'tmdb_id': results[0]['id'], 'season': details['season'] if kind == 'tv' else None}
 
     def request(self, match, preview=False):
