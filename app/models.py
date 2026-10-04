@@ -18,8 +18,8 @@ class Config(BaseModel):
     movies: bool = True
     tv: bool = True
     history_days: int = Field(default=30, ge=1, le=36500)
-    interval_minutes: int = Field(default=360, ge=15, le=10080)
-    request_delay: float = Field(default=5, ge=2, le=60)
+    interval_minutes: int = Field(default=1440, ge=15, le=10080)
+    request_delay: float = Field(default=15, ge=2, le=60)
     tv_seasons: Literal['first', 'all'] = 'first'
 
     @field_validator('douban_user')

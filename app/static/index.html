@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>豆瓣映单 · Douban Reel</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
 <body>
-<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单<small>DOUBAN REEL · 想看清单，自在同步</small></span></a><span class="version">SELF-HOSTED <b>v0.1.1</b></span></header>
+<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单<small>DOUBAN REEL · 想看清单，自在同步</small></span></a><span class="version">SELF-HOSTED <b>v0.1.2</b></span></header>
 <main>
   <section class="hero"><div><p class="eyebrow">YOUR WATCHLIST, CONNECTED</p><h1>把想看，交给片库。</h1><p class="muted">定时读取豆瓣想看列表，将电影与电视剧自动请求到 Seerr。</p></div><div class="hero-actions"><button id="preview" class="secondary">预览同步</button><button id="sync" class="primary">立即同步 <span>↗</span></button><button id="stop" class="danger" hidden>停止任务</button></div></section>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -24,15 +24,14 @@
       </section>
       <section class="card"><div class="section-heading"><span class="step">03</span><div><h2>同步规则</h2><p>决定同步什么，以及何时同步</p></div></div>
         <div class="media-toggles"><label class="toggle-card"><span><b>电影</b><small>提交电影下载请求</small></span><input id="movies" type="checkbox" role="switch" checked></label><label class="toggle-card"><span><b>电视剧</b><small>按普通季提交请求</small></span><input id="tv" type="checkbox" role="switch" checked></label></div>
-        <div class="fields"><div><label for="history_days">历史范围 · 天</label><input id="history_days" type="number" min="1" max="36500" value="30" required></div><div><label for="interval_minutes">同步间隔 · 分钟</label><input id="interval_minutes" type="number" min="15" max="10080" value="360" required></div></div><p class="help">按豆瓣标记“想看”的日期筛选；含今天，使用北京时间。默认最近 30 天。</p>
-        <div class="fields"><div><label for="request_delay">豆瓣请求间隔 · 秒</label><input id="request_delay" type="number" min="2" max="60" step="0.5" value="5" required></div><div><label for="tv_seasons">无明确季号时</label><select id="tv_seasons"><option value="first">只请求第一季</option><option value="all">请求当前全部普通季</option></select></div></div><p class="help">有明确季号时优先请求对应季。特别篇不自动请求。</p>
+        <div class="fields"><div><label for="history_days">历史范围 · 天</label><input id="history_days" type="number" min="1" max="36500" value="30" required></div><div><label for="interval_minutes">同步间隔 · 分钟</label><input id="interval_minutes" type="number" min="15" max="10080" value="1440" required></div></div><p class="help">按豆瓣标记“想看”的日期筛选；含今天，使用北京时间。默认最近 30 天，每天同步一次（1440 分钟）。</p>
+        <div class="fields"><div><label for="request_delay">随机间隔上限 · 秒</label><input id="request_delay" type="number" min="2" max="60" step="0.5" value="15" required></div><div><label for="tv_seasons">无明确季号时</label><select id="tv_seasons"><option value="first">只请求第一季</option><option value="all">请求当前全部普通季</option></select></div></div><p class="help">豆瓣请求间隔在 2 秒至上限之间随机，默认上限 15 秒。首个请求立即发送。有明确季号时优先请求对应季。特别篇不自动请求。</p>
         <label class="schedule-toggle"><span><b>开启定时同步</b><small>保存后开始计时；首次可先预览，再手动同步。</small></span><input id="enabled" type="checkbox" role="switch"></label>
         <p class="help">运行中也可修改并保存。当前任务使用启动时的配置，新配置从下次任务生效。</p>
         <div class="save-row"><span id="dirty" class="help">修改后请保存配置</span><button class="primary" type="submit">保存配置</button></div>
       </section></form>
     </div>
     <aside>
-      <section class="card guide"><p class="eyebrow">HOW IT WORKS</p><h2>从清单到请求</h2><div class="flow"><div><span>1</span><p><b>豆瓣想看</b><small>按日期读取电影、电视剧</small></p></div><div><span>2</span><p><b>IMDb → TMDB</b><small>精确对应媒体，模糊结果留待处理</small></p></div><div><span>3</span><p><b>Seerr 请求</b><small>交由 Radarr / Sonarr 后续处理</small></p></div></div><p class="guide-note">首次使用建议先运行“预览同步”。预览会读取并匹配列表，不创建下载请求。</p><p class="help">请在 Seerr 中配置默认 Radarr / Sonarr 服务、质量配置和根目录。是否自动批准、能否下载，取决于 Seerr 和下载服务的设置。</p></section>
       <section class="card"><div class="section-heading"><div><h2>最近运行</h2><p>最近 20 次任务</p></div><span id="runningBadge" class="badge">空闲</span></div><div id="runs" class="run-list"><p class="empty">尚无同步任务</p></div></section>
     </aside>
   </div>

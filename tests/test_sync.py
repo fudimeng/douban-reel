@@ -45,6 +45,8 @@ def client_with(handler, **kwargs):
 
 def test_defaults_and_input_validation():
     assert Config().history_days == 30
+    assert Config().interval_minutes == 1440
+    assert Config().request_delay == 15
     assert not Config().enabled
     assert Config(douban_user='https://www.douban.com/people/test/').douban_user == 'test'
     assert Config(seerr_url='http://seerr:5055/api/v1').seerr_url == 'http://seerr:5055'
@@ -495,11 +497,34 @@ def test_cookie_verification_and_sync_share_rate_limit(monkeypatch):
             clock['time']+=seconds
             return False
     monkeypatch.setattr('app.clients.time.monotonic',lambda:clock['time'])
+    samples=iter([7.5,12.0])
+    def sample(low,high):
+        assert (low,high)==(2,15)
+        return next(samples)
+    monkeypatch.setattr('app.clients.random.uniform',sample)
     gate=RequestGate()
     transport=httpx.MockTransport(lambda request:httpx.Response(200,text='<html></html>'))
     sync_client=Clients(configuration(),ClockStop(),transport,gate)
     verification_client=Clients(configuration(),ClockStop(),transport,gate)
     sync_client.douban('https://movie.douban.com/subject/1/')
     verification_client.douban('https://www.douban.com/mine/')
-    assert waits==[0,5]
+    clock['time']+=3
+    sync_client.douban('https://movie.douban.com/subject/2/')
+    assert waits==[0,7.5,9]
     sync_client.close();verification_client.close()
+
+
+def test_random_request_interval_uses_custom_limit_and_stops(monkeypatch):
+    monkeypatch.setattr('app.clients.time.monotonic',lambda:100.0)
+    def sample(low,high):
+        assert (low,high)==(2,30)
+        return high
+    monkeypatch.setattr('app.clients.random.uniform',sample)
+    gate=RequestGate()
+    assert gate.wait(30,NoWait())
+    class Stopped:
+        def wait(self,seconds):
+            assert seconds==30
+            return True
+    assert not gate.wait(30,Stopped())
+    assert gate.last_request==100.0

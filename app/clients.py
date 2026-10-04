@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import threading
 import time
@@ -88,11 +89,14 @@ def parse_subject(html):
 class RequestGate:
     def __init__(self):
         self.lock = threading.Lock()
-        self.last_request = 0.0
+        self.last_request = None
 
-    def wait(self, interval, stop):
+    def wait(self, maximum, stop):
         with self.lock:
-            delay = max(0, interval - (time.monotonic() - self.last_request))
+            # The first request is immediate. Subsequent starts share one random
+            # interval, including Cookie verification and redirected requests.
+            delay = 0 if self.last_request is None else max(
+                0, random.uniform(2, maximum) - (time.monotonic() - self.last_request))
             if stop.wait(delay):
                 return False
             self.last_request = time.monotonic()
