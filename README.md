@@ -46,7 +46,7 @@ Docker 数据保存在命名卷 `sync-data`。正常停止容器不会删除数�
 
 ## 首次配置
 
-1. 输入豆瓣用户 ID 或个人主页 URL。这里指个人主页 `/people/xxx/` 中的 `xxx`，不是昵称。
+1. 豆瓣用户可留空，保存 Cookie 时会从 `dbcl2` 自动识别账号。也可手动填写用户 ID 或个人主页 URL，指定目标想看列表；ID 指 `/people/xxx/` 中的 `xxx`，不是昵称。
 2. 浏览器登录豆瓣电影，按 F12 → Network，刷新页面，选中发往 `movie.douban.com` 的页面请求，从 Request Headers 复制完整 `Cookie`。
 3. 在 UI 中粘贴 Cookie，点击“验证并保存”。至少包含 `dbcl2` 和 `ck`。也支持 Cookie JSON 数组，非豆瓣域名的 Cookie 会过滤掉。原 Cookie 验证失败时不会覆盖已保存的 Cookie。
 4. 填入 Seerr 基础地址及 API Key（Seerr 设置 → 通用）。不要填写网页的 `/requests` 路径。
@@ -92,7 +92,7 @@ Seerr 需要事先配置好默认 Radarr / Sonarr 服务、质量配置和根目
 - 域名与反向代理：<可选；域名、DNS 与 Nginx Proxy Manager 等代理服务的访问方式；否则无>
 - Seerr 地址：<必须是 Douban Reel 容器可访问的基础地址>
 - Seerr API Key 来源：<目标机器上的私密文件路径 / 现有 Seerr 配置路径>
-- 豆瓣用户 ID / 个人主页：<账号 ID 或 https://www.douban.com/people/xxx/>
+- 豆瓣用户 ID / 个人主页：<可选，留空则从 Cookie 自动识别>
 - 豆瓣 Cookie 来源：<目标机器上的私密文件路径；或已有 Jellyfin 豆瓣同步插件的配置与密钥目录>
 - Bark 地址来源：<可选；私密文件路径，或已有 Jellyfin 豆瓣同步插件配置与密钥目录；否则无>
 - 电影同步：是
@@ -136,7 +136,7 @@ API 与网页使用相同的 HTTP Basic 管理员认证。写操作需请求头 
 | 健康检查 | `GET /healthz` | 无需认证 |
 | 读取已保存配置 | `GET /api/config` | 仅返回非敏感配置及凭据是否已保存 |
 | 保存规则和服务连接 | `PUT /api/config` | 配置字段，可部分更新 |
-| 验证并保存 Cookie | `POST /api/cookie` | `douban_user`、`cookie` |
+| 验证并保存 Cookie | `POST /api/cookie` | `cookie` 必填；`douban_user` 可省略，自动从 Cookie 识别 |
 | 验证豆瓣 / Seerr | `POST /api/test/douban`、`POST /api/test/seerr` | 无请求体 |
 | 测试 Bark（会发真实通知） | `POST /api/test/bark` | 无请求体 |
 | 预览同步 | `POST /api/sync?preview=true` | 不提交下载请求 |

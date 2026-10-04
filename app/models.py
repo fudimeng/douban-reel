@@ -3,7 +3,7 @@ import re
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 SECRETS = ('douban_cookie', 'seerr_api_key', 'bark_url')
@@ -22,6 +22,15 @@ class Config(BaseModel):
     interval_minutes: int = Field(default=1440, ge=15, le=10080)
     request_delay: float = Field(default=15, ge=2, le=60)
     tv_seasons: Literal['first', 'all'] = 'first'
+
+    @model_validator(mode='after')
+    def resolve_cookie_account(self):
+        if not self.douban_user and self.douban_cookie:
+            parts = dict(part.strip().split('=', 1) for part in self.douban_cookie.split(';') if part.strip())
+            account = re.fullmatch(r'([0-9]{1,100}):.+', parts.get('dbcl2', '').strip().strip('"'))
+            if account:
+                self.douban_user = account[1]
+        return self
 
     @field_validator('douban_user')
     @classmethod

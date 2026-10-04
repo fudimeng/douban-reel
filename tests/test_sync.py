@@ -320,6 +320,54 @@ def test_cookie_validate_before_save_and_delete(web,monkeypatch):
     assert not web.app.state.store.config().douban_cookie
 
 
+@pytest.mark.parametrize('cookie',[
+    'dbcl2="123456:fake"; ck=test',
+    'dbcl2=123456:fake; ck=test',
+    'Cookie: dbcl2="123456:fake"; ck=test',
+    json.dumps([{'name':'dbcl2','value':'123456:fake','domain':'.douban.com'},{'name':'ck','value':'test','domain':'.douban.com'}]),
+])
+def test_cookie_import_can_infer_user_without_id(web,monkeypatch,cookie):
+    verified=[]
+    def verify(client):
+        verified.append(client.config.douban_user)
+        return '登录有效'
+    monkeypatch.setattr(Clients,'verify_douban',verify)
+    response=web.post('/api/cookie',json={'cookie':cookie})
+    assert response.status_code==200
+    assert verified==['123456']
+    assert response.json()['douban_user']=='123456'
+    assert web.app.state.store.config().douban_user=='123456'
+    assert 'fake' not in response.text
+    assert 'dbcl2' not in response.text
+    result=web.put('/api/config',json={'douban_user':''})
+    assert result.status_code==200
+    assert result.json()['douban_user']=='123456'
+
+
+def test_cookie_auto_user_does_not_bypass_verification_or_override_explicit_user(web,monkeypatch):
+    original=configuration()
+    web.app.state.store.save_config(original)
+    def failed(client):raise DoubanError('invalid cookie')
+    monkeypatch.setattr(Clients,'verify_douban',failed)
+    response=web.post('/api/cookie',json={'cookie':'dbcl2="456:fake"; ck=test'})
+    assert response.status_code==400
+    assert web.app.state.store.config()==original
+    monkeypatch.setattr(Clients,'verify_douban',lambda client:'登录有效')
+    response=web.post('/api/cookie',json={'cookie':'dbcl2="456:fake"; ck=test','douban_user':'custom-user'})
+    assert response.status_code==200
+    assert web.app.state.store.config().douban_user=='custom-user'
+
+
+def test_unrecognizable_cookie_user_requests_manual_id_without_leaking_cookie(web,monkeypatch):
+    def unexpected(client):raise AssertionError('Cannot send request before identifying a target user')
+    monkeypatch.setattr(Clients,'verify_douban',unexpected)
+    response=web.post('/api/cookie',json={'cookie':'dbcl2=unrecognized-fake; ck=test'})
+    assert response.status_code==400
+    assert '填写用户 ID' in response.json()['detail']
+    assert 'unrecognized-fake' not in response.text
+    assert not web.app.state.store.config().douban_cookie
+
+
 def test_mapping_and_static(web):
     store=web.app.state.store
     scope=scope_for(store.config())

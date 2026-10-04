@@ -132,7 +132,7 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
 
     class CookieInput(BaseModel):
         cookie: str
-        douban_user: str
+        douban_user: str = ''
 
     @app.post('/api/cookie', dependencies=[Depends(auth)])
     def save_cookie(data: CookieInput):
@@ -142,14 +142,16 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
         client = None
         try:
             config = parse_config({**store().config().model_dump(), 'douban_cookie': data.cookie, 'douban_user': data.douban_user})
-            if not config.douban_cookie or not config.douban_user:
-                raise HTTPException(400, '请填写豆瓣用户 ID 和 Cookie')
+            if not config.douban_cookie:
+                raise HTTPException(400, '请填写豆瓣 Cookie')
+            if not config.douban_user:
+                raise HTTPException(400, '无法从 Cookie 识别账号，请填写用户 ID 或个人主页')
             client = Clients(config, request_gate=service.douban_gate)
             message = client.verify_douban()
             # Verification may take time: merge only the verified credentials into the latest settings.
             store().import_cookie(client.cookie, config.douban_user)
             service.reschedule()
-            return {'message': message + '；Cookie 已加密保存'}
+            return {'message': message + '；Cookie 已加密保存', 'douban_user': config.douban_user}
         finally:
             if client:
                 client.close()
