@@ -58,12 +58,12 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
                 await asyncio.to_thread(app.state.sync.thread.join, 40)
             lock_file.close()
 
-    app = FastAPI(title='豆瓣 → Seerr', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title='豆瓣映单 · Douban Reel', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     basic = HTTPBasic(auto_error=False)
 
     def auth(credentials: HTTPBasicCredentials | None = Depends(basic)):
         if not credentials or not (secrets.compare_digest(credentials.username.encode(), username.encode()) and secrets.compare_digest(credentials.password.encode(), password.encode())):
-            raise HTTPException(401, '请使用管理员账号登录', headers={'WWW-Authenticate': 'Basic realm="Douban Seerr", charset="UTF-8"'})
+            raise HTTPException(401, '请使用管理员账号登录', headers={'WWW-Authenticate': 'Basic realm="Douban Reel", charset="UTF-8"'})
 
     def store():
         return app.state.store
@@ -71,7 +71,7 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
     @app.middleware('http')
     async def security(request: Request, call_next):
         if request.method not in ('GET', 'HEAD', 'OPTIONS'):
-            if request.headers.get('x-requested-with') != 'douban-seerr' or request.headers.get('sec-fetch-site') == 'cross-site':
+            if request.headers.get('x-requested-with') != 'douban-reel' or request.headers.get('sec-fetch-site') == 'cross-site':
                 return JSONResponse({'detail': '请求来源校验失败'}, status_code=403)
         response = await call_next(request)
         response.headers.update({

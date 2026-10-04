@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>豆瓣 → Seerr · 想看同步</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>豆瓣映单 · Douban Reel</title><link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script></head>
 <body>
-<header><a class="brand" href="/"><span class="logo">豆</span><span>豆瓣 <span class="arrow">→</span> Seerr<small>想看清单，自在同步</small></span></a><span class="version">SELF-HOSTED <b>v0.1.0</b></span></header>
+<header><a class="brand" href="/"><span class="logo">映</span><span>豆瓣映单<small>DOUBAN REEL · 想看清单，自在同步</small></span></a><span class="version">SELF-HOSTED <b>v0.1.0</b></span></header>
 <main>
   <section class="hero"><div><p class="eyebrow">YOUR WATCHLIST, CONNECTED</p><h1>把想看，交给片库。</h1><p class="muted">定时读取豆瓣想看列表，将电影与电视剧自动请求到 Seerr。</p></div><div class="hero-actions"><button id="preview" class="secondary">预览同步</button><button id="sync" class="primary">立即同步 <span>↗</span></button><button id="stop" class="danger" hidden>停止任务</button></div></section>
   <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -36,7 +36,7 @@
     </aside>
   </div>
   <section class="card records"><div class="section-heading"><div><h2>同步记录</h2><p>当前账号与 Seerr 最近更新的 200 个条目；失败项会在下次同步重试</p></div><label class="filter-label">状态筛选<select id="filter"><option value="">全部状态</option><option value="submitted">已提交</option><option value="existing">已存在</option><option value="failed">需要处理</option><option value="preview">预览</option><option value="disabled">类型已关闭</option><option value="mapped">已映射</option></select></label></div><div class="table-scroll"><table><thead><tr><th>豆瓣条目</th><th>想看日期</th><th>类型 / TMDB</th><th>状态</th><th>说明</th><th>操作</th></tr></thead><tbody id="items"><tr><td colspan="6" class="empty">保存配置后，运行一次预览即可查看匹配结果。</td></tr></tbody></table></div></section>
-  <footer>豆瓣 → Seerr <span>只读取想看列表 · 不修改豆瓣收藏状态</span></footer>
+  <footer>豆瓣映单 · Douban Reel <span>只读取想看列表 · 不修改豆瓣收藏状态</span></footer>
 </main>
 <dialog id="mappingDialog"><form id="mappingForm"><h2>手动指定 TMDB 映射</h2><p id="mappingTitle" class="muted"></p><input id="mappingSubject" type="hidden"><label for="mappingType">媒体类型</label><select id="mappingType"><option value="movie">电影</option><option value="tv">电视剧</option></select><label for="mappingId">TMDB ID</label><input id="mappingId" type="number" min="1" required><label for="mappingSeason">季号（电视剧可填）</label><input id="mappingSeason" type="number" min="1" max="999"><p class="help">从 TMDB 详情页网址取得数字 ID。保存后请运行预览核对；不会立即提交请求。</p><div class="button-row"><button class="primary" type="submit">保存映射</button><button id="cancelMapping" type="button" class="secondary">取消</button></div></form></dialog>
 </body></html>

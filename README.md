@@ -1,4 +1,4 @@
-# 豆瓣 → Seerr
+# 豆瓣映单 · Douban Reel
 
 独立运行的中文 Web 工具：定时读取豆瓣影视 **想看** 列表，通过 IMDb ID 精确匹配 TMDB，提交 Seerr 电影或电视剧请求，由 Seerr 对接 Radarr / Sonarr。
 

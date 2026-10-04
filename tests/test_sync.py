@@ -242,7 +242,7 @@ def web(tmp_path):
     app=create_app(tmp_path,'test-password-long',scheduler=False)
     with TestClient(app) as client:
         client.auth=('admin','test-password-long')
-        client.headers['X-Requested-With']='douban-seerr'
+        client.headers['X-Requested-With']='douban-reel'
         yield client
 
 

@@ -5,7 +5,7 @@ let currentConfig = {}, items = [], dirty = false, running = false;
 const fields = ['douban_user','seerr_url','seerr_api_key','tmdb_token','movies','tv','history_days','interval_minutes','request_delay','tv_seasons','enabled'];
 function notice(message, error=false) { $('notice').textContent=message; $('notice').className='notice'+(error?' error':''); $('notice').hidden=false; }
 async function api(path, method='GET', body) {
-  const response = await fetch('/api'+path, {method, headers:{'Content-Type':'application/json','X-Requested-With':'douban-seerr'}, ...(body===undefined?{}:{body:JSON.stringify(body)})});
+  const response = await fetch('/api'+path, {method, headers:{'Content-Type':'application/json','X-Requested-With':'douban-reel'}, ...(body===undefined?{}:{body:JSON.stringify(body)})});
   const data = await response.json();
   if (!response.ok) throw new Error(typeof data.detail==='string'?data.detail:'操作失败，请检查输入');
   return data;

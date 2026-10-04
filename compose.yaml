@@ -1,7 +1,7 @@
 services:
-  douban-seerr:
+  douban-reel:
     build: .
-    image: douban-seerr:local
+    image: douban-reel:local
     restart: unless-stopped
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-8787}:8787"
