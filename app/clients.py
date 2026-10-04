@@ -49,6 +49,18 @@ def parse_wish(html):
     return entries, next_link.get('href') if next_link else None
 
 
+def wish_profile_path(html, base_url):
+    # Douban accepts a numeric ID but renders pagination with the account's
+    # custom name. Only trust the profile header of the initial wish page.
+    paths = set()
+    for node in soup_checked(html).select('#db-usr-profile a[href]'):
+        profile = urlsplit(urljoin(base_url, node['href']))
+        if (profile.scheme == 'https' and profile.netloc in ('movie.douban.com', 'www.douban.com')
+                and re.fullmatch(r'/people/[A-Za-z0-9_-]{1,100}/?', profile.path)):
+            paths.add(profile.path.rstrip('/') + '/wish')
+    return next(iter(paths)) if len(paths) == 1 else None
+
+
 def chinese_number(text):
     if text.isdigit():
         return int(text)
@@ -146,12 +158,18 @@ class Clients:
 
     def wish(self, cutoff):
         url, visited = self.wish_url(), set()
+        allowed_paths = {f'/people/{self.config.douban_user}/wish'}
         seen = set()
         for _ in range(200):
             if url in visited:
                 raise DoubanError('豆瓣分页出现循环，任务停止，请稍后重试')
             visited.add(url)
-            entries, next_page = parse_wish(self.douban(url))
+            html = self.douban(url)
+            entries, next_page = parse_wish(html)
+            if len(visited) == 1:
+                canonical = wish_profile_path(html, url)
+                if canonical:
+                    allowed_paths.add(canonical)
             for entry in entries:
                 if entry['subject'] not in seen:
                     seen.add(entry['subject'])
@@ -160,7 +178,8 @@ class Clients:
             if not next_page or (entries and all(e['marked'] and date.fromisoformat(e['marked']) < cutoff for e in entries)):
                 return
             url = urljoin(url, next_page)
-            if urlsplit(url).hostname != 'movie.douban.com' or not urlsplit(url).path.startswith(f'/people/{self.config.douban_user}/wish'):
+            page = urlsplit(url)
+            if page.scheme != 'https' or page.netloc != 'movie.douban.com' or page.path.rstrip('/') not in allowed_paths:
                 raise DoubanError('想看列表分页地址不正确')
         raise DoubanError('达到 200 页读取上限；请缩小历史天数后重试')
 

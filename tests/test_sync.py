@@ -108,6 +108,43 @@ def test_cookie_redirects_never_leak_off_douban():
     client.close()
 
 
+def test_numeric_user_pagination_uses_canonical_profile_alias():
+    calls=[]
+    def handler(request):
+        calls.append(str(request.url))
+        if request.url.params.get('start')=='0':
+            header='<div id="db-usr-profile"><a href="https://movie.douban.com/people/custom-name/">profile</a></div>'
+            return httpx.Response(200,text=header+wish_html([('1','first','2026-10-04')],'/people/custom-name/wish?start=15'))
+        assert request.url.path=='/people/custom-name/wish'
+        return httpx.Response(200,text=wish_html([('2','second','2026-10-04')]))
+    client=client_with(handler,douban_user='123456')
+    assert [e['subject'] for e in client.wish(date(2026,9,5))]==['1','2']
+    assert len(calls)==2
+    client.close()
+
+
+@pytest.mark.parametrize('next_url',[
+    'https://evil.test/people/custom-name/wish?start=15',
+    'http://movie.douban.com/people/custom-name/wish?start=15',
+    'https://movie.douban.com:444/people/custom-name/wish?start=15',
+    'https://someone@movie.douban.com/people/custom-name/wish?start=15',
+    '/people/other-user/wish?start=15',
+    '/people/tester/wishlist?start=15',
+    '/people/custom-name/collect?start=15',
+])
+def test_pagination_rejects_unrelated_accounts_and_destinations(next_url):
+    calls=[]
+    def handler(request):
+        calls.append(str(request.url))
+        header='<div id="db-usr-profile"><a href="/people/custom-name/">profile</a></div>'
+        return httpx.Response(200,text=header+wish_html([('1','first','2026-10-04')],next_url))
+    client=client_with(handler)
+    with pytest.raises(DoubanError,match='分页地址不正确'):
+        list(client.wish(date(2026,9,5)))
+    assert len(calls)==1
+    client.close()
+
+
 def test_movie_preview_existing_and_request():
     writes=[]
     status={'value':1}
