@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import secrets
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -42,7 +43,12 @@ class Store:
                     PRIMARY KEY(scope, subject));
                 CREATE TABLE IF NOT EXISTS mappings (
                     subject TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS cookie_health (
+                    id INTEGER PRIMARY KEY, revision TEXT NOT NULL, status TEXT NOT NULL,
+                    checked TEXT, refreshed TEXT, notification TEXT NOT NULL,
+                    notified_revision TEXT);
             ''')
+            db.execute("INSERT OR IGNORE INTO cookie_health(id,revision,status,notification) VALUES (1,?,'unknown','none')", (secrets.token_hex(16),))
             db.execute("UPDATE runs SET state='interrupted', finished=?, message='进程重启中断；下次同步会重新核对 Seerr 状态' WHERE state='running'", (now(),))
         os.chmod(self.path, 0o600)
 
@@ -67,7 +73,10 @@ class Store:
 
     def save_config(self, config):
         with self.config_lock:
+            previous = self._read_config()
             self._save_config(config)
+            if previous.douban_cookie != config.douban_cookie:
+                self.reset_cookie_health('unknown' if config.douban_cookie else 'missing')
 
     def _save_config(self, config):
         data = config.model_dump()
@@ -80,9 +89,42 @@ class Store:
     def update_config(self, change):
         # A short settings lock, independent of the long-running synchronization lock.
         with self.config_lock:
-            updated = change(self._read_config())
+            previous = self._read_config()
+            original_cookie = previous.douban_cookie
+            updated = change(previous)
             self._save_config(updated)
+            if original_cookie != updated.douban_cookie:
+                self.reset_cookie_health('unknown' if updated.douban_cookie else 'missing')
             return updated
+
+    def reset_cookie_health(self, status):
+        self.execute("UPDATE cookie_health SET revision=?,status=?,checked=NULL,refreshed=NULL,notification='none',notified_revision=NULL WHERE id=1", (secrets.token_hex(16), status))
+
+    def cookie_health(self, public=False):
+        with self.config_lock:
+            state = self.rows('SELECT * FROM cookie_health WHERE id=1')[0]
+            if public:
+                return {key: state[key] for key in ('status', 'checked', 'refreshed', 'notification')}
+            return state
+
+    def import_cookie(self, cookie, user):
+        with self.config_lock:
+            config = self._read_config().model_copy(update={'douban_cookie': cookie, 'douban_user': user})
+            self._save_config(config)
+            self.reset_cookie_health('valid')
+            self.execute('UPDATE cookie_health SET checked=? WHERE id=1', (now(),))
+
+    def refresh_cookie(self, original, user, revision, refreshed):
+        with self.config_lock:
+            current = self._read_config()
+            if (current.douban_cookie != original or current.douban_user != user
+                    or self.cookie_health()['revision'] != revision):
+                return False
+            if refreshed != original:
+                self._save_config(current.model_copy(update={'douban_cookie': refreshed}))
+                self.execute('UPDATE cookie_health SET refreshed=? WHERE id=1', (now(),))
+            self.execute("UPDATE cookie_health SET status='valid',checked=? WHERE id=1", (now(),))
+            return True
 
     def public_config(self, config=None):
         data = (config if config is not None else self.config()).model_dump()

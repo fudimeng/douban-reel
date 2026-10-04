@@ -4,8 +4,9 @@ import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from .clients import Clients, DoubanError, RequestGate, SyncError, parse_subject
+from .clients import Clients, CookieExpired, DoubanError, RequestGate, SyncError, parse_subject
 from .db import now
+from .notifications import send_bark
 
 
 def scope_for(config):
@@ -18,6 +19,7 @@ class SyncService:
         self.clients_factory = clients_factory
         self.lock = threading.Lock()
         self.validation_lock = threading.Lock()
+        self.notification_lock = threading.Lock()
         self.douban_gate = RequestGate()
         self.active_config = None
         self.stop = threading.Event()
@@ -41,12 +43,13 @@ class SyncService:
             with self.store.config_lock:
                 config = self.store.config()
                 mappings = {row['subject']: json.loads(row['value']) for row in self.store.rows('SELECT subject,value FROM mappings')}
+                revision = self.store.cookie_health()['revision']
                 if not config.ready():
                     raise SyncError('请先配置豆瓣用户、Cookie 和 Seerr，并开启至少一种媒体类型')
             run_id = self.store.execute("INSERT INTO runs(started,preview,state) VALUES (?,?,'running')", (now(), int(preview)))
             self.stop.clear()
             self.active_config = config
-            self.thread = threading.Thread(target=self.run, args=(run_id, config, preview, mappings), daemon=True)
+            self.thread = threading.Thread(target=self.run, args=(run_id, config, preview, mappings, revision), daemon=True)
             self.thread.start()
             return run_id
         except Exception:
@@ -54,8 +57,33 @@ class SyncService:
             self.lock.release()
             raise
 
-    def run(self, run_id, config, preview, mappings):
+    def cookie_invalid(self, config, revision):
+        if not config.douban_cookie:
+            return
+        with self.notification_lock:
+            with self.store.config_lock:
+                health = self.store.cookie_health()
+                current = self.store.config()
+                if (health['revision'] != revision or current.douban_user != config.douban_user
+                        or current.douban_cookie != config.douban_cookie):
+                    return
+                self.store.execute("UPDATE cookie_health SET status='invalid',checked=? WHERE id=1", (now(),))
+                if health['notified_revision'] == revision:
+                    return
+                if not config.bark_url:
+                    self.store.execute("UPDATE cookie_health SET notification='not_configured' WHERE id=1")
+                    return
+            try:
+                send_bark(config.bark_url)
+            except SyncError:
+                self.store.execute("UPDATE cookie_health SET notification='failed' WHERE id=1 AND revision=?", (revision,))
+            else:
+                self.store.execute("UPDATE cookie_health SET notification='sent',notified_revision=? WHERE id=1 AND revision=?", (revision, revision))
+
+    def run(self, run_id, config, preview, mappings, revision):
         client = None
+        verified = False
+        persisted_cookie = config.douban_cookie
         processed, errors = 0, 0
         state, message = 'complete', ''
         try:
@@ -63,6 +91,10 @@ class SyncService:
             if isinstance(client, Clients):
                 client.gate = self.douban_gate
             client.verify_douban()
+            verified = True
+            if isinstance(client, Clients) and self.store.refresh_cookie(persisted_cookie, config.douban_user, revision, client.cookie):
+                persisted_cookie = client.cookie
+                self.active_config = config.model_copy(update={'douban_cookie': client.cookie})
             cutoff = datetime.now(ZoneInfo('Asia/Shanghai')).date() - timedelta(days=config.history_days - 1)
             scope = scope_for(config)
             for entry in client.wish(cutoff):
@@ -99,6 +131,11 @@ class SyncService:
                 self.store.execute('UPDATE runs SET processed=? WHERE id=?', (processed, run_id))
             state = 'partial' if errors else 'complete'
             message = f'处理 {processed} 条，{errors} 条需要处理' + ('；预览未提交请求' if preview else '')
+        except CookieExpired as error:
+            verified = False
+            state, message = 'stopped' if self.stop.is_set() else 'failed', str(error)
+            if not self.stop.is_set():
+                self.cookie_invalid(config.model_copy(update={'douban_cookie': persisted_cookie}), revision)
         except SyncError as error:
             state, message = 'stopped' if self.stop.is_set() else 'failed', str(error)
         except Exception:
@@ -106,6 +143,8 @@ class SyncService:
             state, message = 'failed', '内部处理异常，请检查服务版本与数据格式'
         finally:
             if client:
+                if verified and isinstance(client, Clients):
+                    self.store.refresh_cookie(persisted_cookie, config.douban_user, revision, client.cookie)
                 client.close()
             self.store.execute('UPDATE runs SET finished=?,state=?,message=?,processed=? WHERE id=?', (now(), state, message, processed, run_id))
             if not preview:

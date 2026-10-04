@@ -4,6 +4,9 @@ import re
 import threading
 import time
 from datetime import date
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from http.cookies import SimpleCookie, CookieError
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -18,9 +21,15 @@ class DoubanError(SyncError):
     pass
 
 
+class CookieExpired(DoubanError):
+    pass
+
+
 def soup_checked(html):
     soup = BeautifulSoup(html, 'html.parser')
-    if soup.select_one('form[action*="login"], #captcha_image, input[name="captcha-solution"], script[src*="sec.douban.com"]') or any(
+    if soup.select_one('form[action*="login"], #captcha_image, input[name="captcha-solution"], script[src*="sec.douban.com"]'):
+        raise CookieExpired('豆瓣 Cookie 已失效或需要登录验证，请在浏览器完成验证并重新导入 Cookie')
+    if any(
         marker in soup.get_text() for marker in ('异常请求', '有异常请求', '检测到有异常', '访问豆瓣的方式有点像机器人', '访问过于频繁')):
         raise DoubanError('豆瓣要求登录或安全验证。请在浏览器完成验证并更新 Cookie，任务已停止')
     return soup
@@ -118,6 +127,7 @@ class RequestGate:
 class Clients:
     def __init__(self, config, stop=None, transport=None, request_gate=None):
         self.config = config
+        self.cookie = config.douban_cookie
         self.stop = stop or threading.Event()
         self.http = httpx.Client(timeout=30, follow_redirects=False, transport=transport)
         self.gate = request_gate or RequestGate()
@@ -132,12 +142,19 @@ class Clients:
             raise SyncError('任务已停止')
         try:
             response = self.http.get(url, headers={
-                'Cookie': self.config.douban_cookie,
+                'Cookie': self.cookie,
                 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36',
                 'Referer': 'https://movie.douban.com/',
             })
         except httpx.HTTPError:
             raise DoubanError('无法连接豆瓣，请检查网络；本轮已停止') from None
+        if response.status_code in (401, 403):
+            raise CookieExpired('豆瓣拒绝了登录凭据，请完成登录验证并重新导入 Cookie')
+        if response.is_redirect:
+            destination = urljoin(url, response.headers.get('location', ''))
+            if '/login' in urlsplit(destination).path or urlsplit(destination).hostname == 'accounts.douban.com':
+                raise CookieExpired('豆瓣要求重新登录，请更新 Cookie')
+        self.update_response_cookies(response)
         if response.is_redirect and redirects < 4:
             destination = urljoin(url, response.headers.get('location', ''))
             if urlsplit(destination).hostname in ('movie.douban.com', 'www.douban.com') and '/login' not in destination:
@@ -146,10 +163,48 @@ class Clients:
             raise DoubanError(f'豆瓣返回 HTTP {response.status_code}；请检查 Cookie 或在浏览器完成验证')
         return response.text
 
+    def update_response_cookies(self, response):
+        cookies = dict(part.strip().split('=', 1) for part in self.cookie.split(';') if part.strip())
+        for header in response.headers.get_list('set-cookie'):
+            parsed = SimpleCookie()
+            try:
+                parsed.load(header)
+            except CookieError:
+                continue
+            for name, value in parsed.items():
+                domain = value['domain'].lstrip('.').lower()
+                if domain and domain not in ('douban.com', 'movie.douban.com', 'www.douban.com'):
+                    continue
+                expired = value['max-age'] and value['max-age'].lstrip('-').isdigit() and int(value['max-age']) <= 0
+                if value['expires'] and not value['max-age']:
+                    try:
+                        expired = parsedate_to_datetime(value['expires']) <= datetime.now(timezone.utc)
+                    except (ValueError, TypeError, OverflowError):
+                        pass
+                if expired:
+                    cookies.pop(name, None)
+                else:
+                    cookies[name] = value.coded_value
+        candidate = '; '.join(f'{name}={value}' for name, value in cookies.items())
+        if candidate != self.cookie:
+            self.set_cookie(candidate)
+
+    def set_cookie(self, value):
+        # Validate without exposing upstream cookie values in exceptions.
+        try:
+            self.cookie = type(self.config).cookie(value)
+        except ValueError:
+            raise CookieExpired('豆瓣返回的登录凭据不可用，请重新导入 Cookie') from None
+
     def verify_douban(self):
         soup = soup_checked(self.douban('https://www.douban.com/mine/'))
         if not soup.select_one('a[href*="/accounts/logout"], a[href*="/accounts/loginout"], .nav-user-account'):
-            raise DoubanError('无法确认豆瓣登录状态，Cookie 可能已失效；请重新复制完整 Cookie')
+            raise CookieExpired('无法确认豆瓣登录状态，Cookie 可能已失效；请重新复制完整 Cookie')
+        csrf = soup.select_one('input[name="ck"][value]')
+        if csrf and re.fullmatch(r'[A-Za-z0-9_-]{1,128}', csrf['value']):
+            cookies = dict(part.strip().split('=', 1) for part in self.cookie.split(';') if part.strip())
+            cookies['ck'] = csrf['value']
+            self.set_cookie('; '.join(f'{name}={value}' for name, value in cookies.items()))
         entries, _ = parse_wish(self.douban(self.wish_url()))
         return f'豆瓣登录有效，目标想看列表可读取（首页 {len(entries)} 条）'
 

@@ -12,10 +12,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, ValidationError
 
-from .clients import Clients, SyncError
+from .clients import Clients, CookieExpired, SyncError
 from .db import Store
 from .models import Config, Mapping
 from .sync import SyncService, scope_for
+from .notifications import send_bark
 
 
 STATIC = Path(__file__).parent / 'static'
@@ -120,7 +121,7 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
         def update(current):
             old = current.model_dump()
             allowed = set(old) - {'douban_cookie'}
-            old.update({k: v for k, v in data.items() if k in allowed and not (k == 'seerr_api_key' and v == '')})
+            old.update({k: v for k, v in data.items() if k in allowed and not (k in ('seerr_api_key', 'bark_url') and v == '')})
             updated = parse_config(old)
             if updated.enabled and not updated.ready():
                 raise HTTPException(400, '开启定时同步前，请填写全部连接信息并验证保存 Cookie')
@@ -146,8 +147,7 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
             client = Clients(config, request_gate=service.douban_gate)
             message = client.verify_douban()
             # Verification may take time: merge only the verified credentials into the latest settings.
-            store().update_config(lambda current: parse_config({**current.model_dump(),
-                'douban_cookie': config.douban_cookie, 'douban_user': config.douban_user}))
+            store().import_cookie(client.cookie, config.douban_user)
             service.reschedule()
             return {'message': message + '；Cookie 已加密保存'}
         finally:
@@ -169,24 +169,39 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
 
     @app.post('/api/test/{target}', dependencies=[Depends(auth)])
     def test_connection(target: str):
-        if target not in ('douban', 'seerr'):
+        if target not in ('douban', 'seerr', 'bark'):
             raise HTTPException(404)
         service = app.state.sync
         if not service.validation_lock.acquire(blocking=False):
             raise HTTPException(409, '另一个连接或 Cookie 验证正在进行，请稍后重试')
         client = None
+        with store().config_lock:
+            config = store().config()
+            revision = store().cookie_health()['revision']
         try:
-            client = Clients(store().config(), request_gate=service.douban_gate)
+            if target == 'bark':
+                send_bark(config.bark_url, test=True)
+                return {'message': 'Bark 测试通知已发送'}
+            client = Clients(config, request_gate=service.douban_gate)
             if target == 'douban':
                 message = client.verify_douban()
+                store().refresh_cookie(config.douban_cookie, config.douban_user, revision, client.cookie)
             else:
                 client.api('Seerr', 'GET', '/auth/me')
                 message = target.upper() + ' 连接成功'
             return {'message': message}
+        except CookieExpired:
+            service.cookie_invalid(config, revision)
+            raise
         finally:
             if client:
                 client.close()
             service.validation_lock.release()
+
+    @app.delete('/api/bark', dependencies=[Depends(auth)])
+    def delete_bark():
+        store().update_config(lambda current: current.model_copy(update={'bark_url': ''}))
+        return {'message': 'Bark 推送地址已删除；运行中的任务继续使用启动时的配置'}
 
     @app.get('/api/status', dependencies=[Depends(auth)])
     def status():
@@ -194,6 +209,7 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
         scope = scope_for(db.config())
         return {'running': service.running, 'next_run': service.next_run.isoformat() if service.next_run else None,
                 'settings_pending': service.active_config is not None and service.active_config != db.config(),
+                'cookie_health': db.cookie_health(public=True),
                 'runs': db.rows('SELECT * FROM runs ORDER BY id DESC LIMIT 20'),
                 'items': db.rows('SELECT * FROM items WHERE scope=? ORDER BY updated DESC LIMIT 200', (scope,)),
                 'counts': {r['state']: r['n'] for r in db.rows('SELECT state,COUNT(*) n FROM items WHERE scope=? GROUP BY state', (scope,))}}

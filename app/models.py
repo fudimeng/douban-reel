@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator
 
 
-SECRETS = ('douban_cookie', 'seerr_api_key')
+SECRETS = ('douban_cookie', 'seerr_api_key', 'bark_url')
 
 
 class Config(BaseModel):
@@ -14,6 +14,7 @@ class Config(BaseModel):
     douban_cookie: str = ''
     seerr_url: str = ''
     seerr_api_key: str = ''
+    bark_url: str = ''
     enabled: bool = False
     movies: bool = True
     tv: bool = True
@@ -77,6 +78,23 @@ class Config(BaseModel):
         value = value.strip()
         if any(c.isspace() for c in value) or len(value) > 4096:
             raise ValueError('密钥不可包含空格或换行')
+        return value
+
+    @field_validator('bark_url')
+    @classmethod
+    def notification_url(cls, value):
+        value = value.strip()
+        if value:
+            parsed = urlsplit(value)
+            if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+                    or parsed.username or parsed.password or parsed.fragment
+                    or not parsed.path.strip('/') or len(value) > 4096
+                    or any(c.isspace() for c in value)):
+                raise ValueError('请输入包含设备密钥的完整 HTTP(S) Bark 推送地址')
+            try:
+                parsed.port
+            except ValueError:
+                raise ValueError('Bark 推送地址端口无效') from None
         return value
 
     def ready(self):
