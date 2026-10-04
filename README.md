@@ -30,7 +30,7 @@ python3 scripts/init_env.py
 docker compose up -d --build
 ```
 
-打开 **http://localhost:8787**，浏览器会提示登录。用户名默认 `admin`，自动生成的密码在本地 `.env` 文件中。初始化脚本不覆盖已有 `.env`，也不会把密码输出到终端日志。
+打开 [http://localhost:8787](http://localhost:8787)，浏览器会提示登录。用户名默认 `admin`，自动生成的密码在本地 `.env` 文件中。初始化脚本不覆盖已有 `.env`，也不会把密码输出到终端日志。
 
 没有 Python 的 NAS 可复制 `.env.example` 为 `.env`，自行修改 `ADMIN_PASSWORD`（至少 12 个字符），然后运行 Docker Compose。
 
