@@ -45,7 +45,7 @@ class SyncService:
                 mappings = {row['subject']: json.loads(row['value']) for row in self.store.rows('SELECT subject,value FROM mappings')}
                 revision = self.store.cookie_health()['revision']
                 if not config.ready():
-                    raise SyncError('请先配置豆瓣用户、Cookie 和 Seerr，并开启至少一种媒体类型')
+                    raise SyncError('请先验证保存 Cookie、配置 Seerr，并开启至少一种媒体类型')
             run_id = self.store.execute("INSERT INTO runs(started,preview,state) VALUES (?,?,'running')", (now(), int(preview)))
             self.stop.clear()
             self.active_config = config

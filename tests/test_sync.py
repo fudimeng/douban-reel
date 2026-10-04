@@ -305,17 +305,17 @@ def test_auth_csrf_and_no_secret_echo(web):
 def test_cookie_validate_before_save_and_delete(web,monkeypatch):
     def failure(self):raise DoubanError('invalid cookie')
     monkeypatch.setattr(Clients,'verify_douban',failure)
-    response=web.post('/api/cookie',json={'cookie':'dbcl2=x; ck=y','douban_user':'tester'})
+    response=web.post('/api/cookie',json={'cookie':'dbcl2=123:test; ck=y'})
     assert response.status_code==400
     assert not web.app.state.store.config().douban_cookie
     monkeypatch.setattr(Clients,'verify_douban',lambda self:'登录有效')
-    response=web.post('/api/cookie',json={'cookie':'dbcl2=x; ck=y','douban_user':'tester'})
+    response=web.post('/api/cookie',json={'cookie':'dbcl2=123:test; ck=y'})
     assert response.status_code==200
     assert 'dbcl2' not in response.text
-    assert web.app.state.store.config().douban_cookie=='dbcl2=x; ck=y'
+    assert web.app.state.store.config().douban_cookie=='dbcl2=123:test; ck=y'
     # General settings cannot bypass cookie validation.
     web.put('/api/config',json={'douban_cookie':'dbcl2=evil; ck=y'})
-    assert web.app.state.store.config().douban_cookie=='dbcl2=x; ck=y'
+    assert web.app.state.store.config().douban_cookie=='dbcl2=123:test; ck=y'
     assert web.delete('/api/cookie').status_code==200
     assert not web.app.state.store.config().douban_cookie
 
@@ -339,12 +339,12 @@ def test_cookie_import_can_infer_user_without_id(web,monkeypatch,cookie):
     assert web.app.state.store.config().douban_user=='123456'
     assert 'fake' not in response.text
     assert 'dbcl2' not in response.text
-    result=web.put('/api/config',json={'douban_user':''})
+    result=web.put('/api/config',json={'douban_user':'other-user'})
     assert result.status_code==200
     assert result.json()['douban_user']=='123456'
 
 
-def test_cookie_auto_user_does_not_bypass_verification_or_override_explicit_user(web,monkeypatch):
+def test_cookie_auto_user_requires_verification_and_ignores_manual_target(web,monkeypatch):
     original=configuration()
     web.app.state.store.save_config(original)
     def failed(client):raise DoubanError('invalid cookie')
@@ -355,15 +355,15 @@ def test_cookie_auto_user_does_not_bypass_verification_or_override_explicit_user
     monkeypatch.setattr(Clients,'verify_douban',lambda client:'登录有效')
     response=web.post('/api/cookie',json={'cookie':'dbcl2="456:fake"; ck=test','douban_user':'custom-user'})
     assert response.status_code==200
-    assert web.app.state.store.config().douban_user=='custom-user'
+    assert web.app.state.store.config().douban_user=='456'
 
 
-def test_unrecognizable_cookie_user_requests_manual_id_without_leaking_cookie(web,monkeypatch):
+def test_unrecognizable_cookie_user_requests_complete_cookie_without_leaking_cookie(web,monkeypatch):
     def unexpected(client):raise AssertionError('Cannot send request before identifying a target user')
     monkeypatch.setattr(Clients,'verify_douban',unexpected)
     response=web.post('/api/cookie',json={'cookie':'dbcl2=unrecognized-fake; ck=test'})
     assert response.status_code==400
-    assert '填写用户 ID' in response.json()['detail']
+    assert '重新复制完整 Cookie' in response.json()['detail']
     assert 'unrecognized-fake' not in response.text
     assert not web.app.state.store.config().douban_cookie
 
@@ -517,7 +517,7 @@ def test_cookie_validation_does_not_block_sync_or_overwrite_new_settings(web,mon
     assert worker_started.wait(2)
     monkeypatch.setattr(Clients,'verify_douban',verify)
     with ThreadPoolExecutor(max_workers=1) as executor:
-        future=executor.submit(web.post,'/api/cookie',json={'cookie':'dbcl2=new; ck=y','douban_user':'tester'})
+        future=executor.submit(web.post,'/api/cookie',json={'cookie':'dbcl2=123:new; ck=y'})
         try:
             assert validation_started.wait(2)
             assert web.put('/api/config',json={'history_days':77,'request_delay':15}).status_code==200
@@ -526,7 +526,7 @@ def test_cookie_validation_does_not_block_sync_or_overwrite_new_settings(web,mon
             assert future.result(timeout=3).status_code==200
             assert store.config().history_days==77
             assert store.config().request_delay==15
-            assert store.config().douban_cookie=='dbcl2=new; ck=y'
+            assert store.config().douban_cookie=='dbcl2=123:new; ck=y'
             assert service.active_config.douban_cookie==configuration().douban_cookie
         finally:
             validation_release.set();worker_release.set();service.thread.join(3)

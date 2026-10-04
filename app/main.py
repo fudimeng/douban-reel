@@ -120,7 +120,7 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
         service = app.state.sync
         def update(current):
             old = current.model_dump()
-            allowed = set(old) - {'douban_cookie'}
+            allowed = set(old) - {'douban_cookie', 'douban_user'}
             old.update({k: v for k, v in data.items() if k in allowed and not (k in ('seerr_api_key', 'bark_url') and v == '')})
             updated = parse_config(old)
             if updated.enabled and not updated.ready():
@@ -132,7 +132,6 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
 
     class CookieInput(BaseModel):
         cookie: str
-        douban_user: str = ''
 
     @app.post('/api/cookie', dependencies=[Depends(auth)])
     def save_cookie(data: CookieInput):
@@ -141,11 +140,11 @@ def create_app(data_dir=None, admin_password=None, scheduler=True):
             raise HTTPException(409, '另一个连接或 Cookie 验证正在进行，请稍后重试')
         client = None
         try:
-            config = parse_config({**store().config().model_dump(), 'douban_cookie': data.cookie, 'douban_user': data.douban_user})
+            config = parse_config({**store().config().model_dump(), 'douban_cookie': data.cookie, 'douban_user': ''})
             if not config.douban_cookie:
                 raise HTTPException(400, '请填写豆瓣 Cookie')
             if not config.douban_user:
-                raise HTTPException(400, '无法从 Cookie 识别账号，请填写用户 ID 或个人主页')
+                raise HTTPException(400, 'Cookie 中未找到账号信息，请重新复制完整 Cookie')
             client = Clients(config, request_gate=service.douban_gate)
             message = client.verify_douban()
             # Verification may take time: merge only the verified credentials into the latest settings.
